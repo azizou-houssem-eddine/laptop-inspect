@@ -9,14 +9,20 @@ Run it straight from PowerShell on any Windows 10/11 laptop you are inspecting b
 Run in **PowerShell** (right-click Start -> Terminal / PowerShell):
 
 ```powershell
-irm https://github.com/azizou-houssem-eddine/laptop-inspect/releases/latest/download/inspect.ps1 | iex
+# Short memorable one-liner (redirects to latest GitHub Release):
+irm https://is.gd/lapcheck | iex
 ```
 
-Alternative direct `main` branch raw URL:
+*(Shortest keystrokes in Windows PowerShell: `irm is.gd/lapcheck | iex`)*
+
+Direct GitHub Release & raw URLs (zero third-party redirectors):
 
 ```powershell
+irm https://github.com/azizou-houssem-eddine/laptop-inspect/releases/latest/download/inspect.ps1 | iex
 irm https://raw.githubusercontent.com/azizou-houssem-eddine/laptop-inspect/main/inspect.ps1 | iex
 ```
+
+> **Tip (Custom Domain):** If you own a personal domain (e.g., `check.yourdomain.com`), add a Cloudflare Single Redirect (`*check.yourdomain.com/*` -> `https://github.com/azizou-houssem-eddine/laptop-inspect/releases/latest/download/inspect.ps1`, HTTP 302) for a 100% self-hosted short command like `get.activated.win`.
 
 > When started from a standard user prompt, LaptopInspect offers optional UAC elevation (`[Y/n]`) so it can read Vendor BIOS WMI, BitLocker, MDM CIM, and SSD SMART wear. If you decline UAC, it continues cleanly in Standard mode and clearly labels unavailable telemetry instead of guessing.
 
@@ -24,17 +30,17 @@ irm https://raw.githubusercontent.com/azizou-houssem-eddine/laptop-inspect/main/
 
 ```powershell
 # Fast 6-second hardware + corporate lock audit without opening browser or stress tests:
-$env:LI_QUICK='1'; $env:LI_NO_BROWSER='1'; irm https://github.com/azizou-houssem-eddine/laptop-inspect/releases/latest/download/inspect.ps1 | iex
+$env:LI_QUICK='1'; $env:LI_NO_BROWSER='1'; irm https://is.gd/lapcheck | iex
 
 # Silent zero-prompt software installer only (Resale Essentials preset):
-$env:LI_INSTALL='essentials'; $env:LI_INSTALL_ONLY='1'; irm https://github.com/azizou-houssem-eddine/laptop-inspect/releases/latest/download/inspect.ps1 | iex
+$env:LI_INSTALL='essentials'; $env:LI_INSTALL_ONLY='1'; irm https://is.gd/lapcheck | iex
 ```
 
 Supported environment overrides: `LI_QUICK=1`, `LI_SKIP_STRESS=1`, `LI_STRESS_SECONDS=10`, `LI_NO_ELEVATE=1`, `LI_NO_BROWSER=1`, `LI_NO_SERVER=1`, `LI_JSON_ONLY=1`, `LI_OUTDIR="C:\Reports"`, `LI_INSTALL=<preset|comma-list>`, `LI_INSTALL_ONLY=1`, `LI_UPGRADE_ALL=1`, `LI_DRY_RUN=1`.
 
 ### Offline USB Usage
 
-1. Download `LaptopInspect-v1.0.0.zip` from [Releases](https://github.com/azizou-houssem-eddine/laptop-inspect/releases).
+1. Download `LaptopInspect-v1.1.0.zip` from [Releases](https://github.com/azizou-houssem-eddine/laptop-inspect/releases).
 2. Extract to a USB flash drive.
 3. Double-click `RUN.bat` (auto-requests Admin elevation) or run `.\inspect.ps1` in PowerShell.
 
