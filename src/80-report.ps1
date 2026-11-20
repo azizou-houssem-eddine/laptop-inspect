@@ -89,11 +89,25 @@ function Start-ReportHttpServer {
     $listener.Start()
 
     $currentManualJson = '{}'
+    $installState = [hashtable]::Synchronized(@{
+        Running         = $false
+        State           = 'Idle'
+        CurrentIndex    = 0
+        Total           = 0
+        CurrentApp      = ''
+        CancelRequested = $false
+        Winget          = (Get-WingetInfo)
+        Results         = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+        Logs            = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+    })
+    $installBg = $null
+    $installAsync = $null
+    $installRunspace = $null
 
     try {
         if (-not $NoLaunchBrowser) {
             Write-Host ("[+] Interactive Report Server running at {0}" -f $prefix) -ForegroundColor Green
-            Write-Host "    Complete interactive tests in your browser, click 'Save Completed Report', or press [Q] here to stop server." -ForegroundColor Gray
+            Write-Host "    Complete interactive tests or silent app installs in browser, or press [Q] here to stop server." -ForegroundColor Gray
             try { Start-Process $prefix | Out-Null } catch {}
         }
 
@@ -104,6 +118,14 @@ function Start-ReportHttpServer {
         while ($running) {
             if ($MaxSeconds -gt 0 -and $sw.Elapsed.TotalSeconds -ge $MaxSeconds) {
                 break
+            }
+            if ($installBg -and $installAsync -and $installAsync.IsCompleted) {
+                try { $installBg.EndInvoke($installAsync) | Out-Null } catch {}
+                try { $installBg.Dispose() } catch {}
+                try { $installRunspace.Close(); $installRunspace.Dispose() } catch {}
+                $installBg = $null
+                $installAsync = $null
+                $installRunspace = $null
             }
             try {
                 if (-not [Console]::IsInputRedirected -and [Console]::KeyAvailable) {
@@ -133,6 +155,81 @@ function Start-ReportHttpServer {
                 } elseif ($method -eq 'GET' -and $path -eq '/api/ports') {
                     $snap = Get-ConnectedPortsSnapshot | ConvertTo-Json -Depth 6 -Compress
                     Send-HttpResponse -Context $ctx -StatusCode 200 -ContentType 'application/json; charset=utf-8' -Body $snap
+                } elseif ($method -eq 'GET' -and $path -eq '/api/install/status') {
+                    $snapObj = [PSCustomObject]@{
+                        Running      = [bool]$installState.Running
+                        State        = [string]$installState.State
+                        CurrentIndex = [int]$installState.CurrentIndex
+                        Total        = [int]$installState.Total
+                        CurrentApp   = [string]$installState.CurrentApp
+                        Winget       = $installState.Winget
+                        Results      = @($installState.Results.ToArray())
+                        Logs         = @($installState.Logs.ToArray())
+                    } | ConvertTo-Json -Depth 6 -Compress
+                    Send-HttpResponse -Context $ctx -StatusCode 200 -ContentType 'application/json; charset=utf-8' -Body $snapObj
+                } elseif ($method -eq 'POST' -and $path -eq '/api/install') {
+                    if ($installState.Running) {
+                        Send-HttpResponse -Context $ctx -StatusCode 409 -ContentType 'application/json; charset=utf-8' -Body '{"ok":false,"error":"An installation queue is already running."}'
+                        continue
+                    }
+                    $sr = New-Object System.IO.StreamReader($req.InputStream, [System.Text.Encoding]::UTF8)
+                    $body = $sr.ReadToEnd()
+                    $sr.Dispose()
+                    $reqObj = $null
+                    try { $reqObj = $body | ConvertFrom-Json } catch {}
+                    if ($null -eq $reqObj) {
+                        Send-HttpResponse -Context $ctx -StatusCode 400 -ContentType 'application/json; charset=utf-8' -Body '{"ok":false,"error":"Invalid JSON payload"}'
+                        continue
+                    }
+
+                    $reqIds = @()
+                    if ($reqObj.ids) { $reqIds = @($reqObj.ids | ForEach-Object { [string]$_ }) }
+                    $reqPreset = if ($reqObj.preset) { [string]$reqObj.preset } else { '' }
+                    $reqUpgrade = [bool]$reqObj.upgradeAll
+                    $reqDryRun = [bool]$reqObj.dryRun
+
+                    try {
+                        $targets = @(Resolve-InstallTargets -KeysOrIds $reqIds -Preset $reqPreset)
+                    } catch {
+                        $badMsg = (@{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress)
+                        Send-HttpResponse -Context $ctx -StatusCode 400 -ContentType 'application/json; charset=utf-8' -Body $badMsg
+                        continue
+                    }
+
+                    if ($targets.Count -eq 0 -and -not $reqUpgrade) {
+                        Send-HttpResponse -Context $ctx -StatusCode 400 -ContentType 'application/json; charset=utf-8' -Body '{"ok":false,"error":"No packages or upgrade option selected."}'
+                        continue
+                    }
+
+                    $installState.Results.Clear()
+                    $installState.Logs.Clear()
+                    $installState.CancelRequested = $false
+                    $installState.Running = $true
+                    $installState.State = 'Running'
+                    $installState.CurrentIndex = 0
+                    $installState.Total = $targets.Count + $(if ($reqUpgrade) { 1 } else { 0 })
+                    $installState.CurrentApp = ''
+
+                    $iss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+                    foreach ($fnName in @('Get-AppCatalog','Get-AppPresets','Test-SafeWingetId','Resolve-InstallTargets','Get-WingetInfo','Ensure-WingetReady','Build-WingetInstallArgs','Build-WingetUpgradeAllArgs','ConvertTo-WingetInstallResult','Invoke-SilentAppInstallBatch')) {
+                        $fnDef = (Get-Command -Name $fnName -ErrorAction Stop).Definition
+                        $iss.Commands.Add((New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($fnName, $fnDef)))
+                    }
+                    $installRunspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace($iss)
+                    $installRunspace.Open()
+                    $installBg = [PowerShell]::Create()
+                    $installBg.Runspace = $installRunspace
+                    [void]$installBg.AddScript({
+                        param($TgtList, $DoUpgrade, $DoDry, $SharedState)
+                        Invoke-SilentAppInstallBatch -Targets $TgtList -UpgradeAll:$DoUpgrade -DryRun:$DoDry -ProgressState $SharedState | Out-Null
+                    }).AddArgument($targets).AddArgument($reqUpgrade).AddArgument($reqDryRun).AddArgument($installState)
+                    $installAsync = $installBg.BeginInvoke()
+
+                    $ack = (@{ ok = $true; total = $installState.Total } | ConvertTo-Json -Compress)
+                    Send-HttpResponse -Context $ctx -StatusCode 202 -ContentType 'application/json; charset=utf-8' -Body $ack
+                } elseif ($method -eq 'POST' -and $path -eq '/api/install/cancel') {
+                    $installState.CancelRequested = $true
+                    Send-HttpResponse -Context $ctx -StatusCode 200 -ContentType 'application/json; charset=utf-8' -Body '{"ok":true}'
                 } elseif ($method -eq 'POST' -and $path -eq '/api/save') {
                     $sr = New-Object System.IO.StreamReader($req.InputStream, [System.Text.Encoding]::UTF8)
                     $body = $sr.ReadToEnd()
@@ -171,6 +268,14 @@ function Start-ReportHttpServer {
             }
         }
     } finally {
+        if ($installBg) {
+            $installState.CancelRequested = $true
+            try { $installBg.Stop() } catch {}
+            try { $installBg.Dispose() } catch {}
+        }
+        if ($installRunspace) {
+            try { $installRunspace.Close(); $installRunspace.Dispose() } catch {}
+        }
         try { if ($listener.IsListening) { $listener.Stop() } } catch {}
         try { $listener.Close() } catch {}
     }
@@ -252,9 +357,31 @@ function Invoke-LaptopInspect {
             -NoBrowserFlag:$NoBrowser `
             -NoServerFlag:$NoServer `
             -JsonOnlyFlag:$JsonOnly `
-            -TargetOutDir $targetOutDir
+            -TargetOutDir $targetOutDir `
+            -PresetFlag $InstallPreset `
+            -AppsFlag $InstallApps `
+            -UpgradeAllFlag:$UpgradeAll `
+            -InstallOnlyFlag:$InstallOnly `
+            -DryRunFlag:$DryRun
         if ($elevatedStarted) {
             Write-Host "Elevated session started in new window. Exiting non-admin parent." -ForegroundColor Green
+            return
+        }
+
+        if ($InstallOnly) {
+            Write-Host ""
+            Write-Host ("=== {0} v{1} - Silent App Installer ===" -f $script:ToolName, $script:ToolVersion) -ForegroundColor Cyan
+            $targets = @(Resolve-InstallTargets -KeysOrIds $InstallApps -Preset $InstallPreset)
+            if ($targets.Count -eq 0 -and -not $UpgradeAll) {
+                throw "No apps specified. Pass -InstallPreset <essentials|office|tech|dev>, -InstallApps <keys/ids>, or -UpgradeAll."
+            }
+            $resList = @(Invoke-SilentAppInstallBatch -Targets $targets -UpgradeAll:$UpgradeAll -DryRun:$DryRun -ConsoleOutput)
+            Write-Host ""
+            Write-Host "=== Silent Install Summary ===" -ForegroundColor Cyan
+            foreach ($ri in $resList) {
+                $col = if ($ri.Success) { 'Green' } else { 'Red' }
+                Write-Host ("  [{0}] {1} ({2}) -> {3}" -f $(if ($ri.Success) { 'OK' } else { 'FAIL' }), $ri.Name, $ri.WingetId, $ri.Status) -ForegroundColor $col
+            }
             return
         }
 
@@ -311,10 +438,29 @@ function Invoke-LaptopInspect {
             Battery       = $batInfo
             Peripherals   = $periphInfo
             InitialPorts  = $portSnap
+            Installer     = [PSCustomObject]@{
+                Winget  = (Get-WingetInfo)
+                Catalog = @(Get-AppCatalog)
+                Presets = @(Get-AppPresets)
+            }
             Scoring       = $null
         }
 
         $reportObj.Scoring = Get-BuyerVerdict -ReportData $reportObj
+
+        $cliTargets = @()
+        if (-not [string]::IsNullOrWhiteSpace($InstallPreset) -or ($InstallApps -and $InstallApps.Count -gt 0)) {
+            $cliTargets = @(Resolve-InstallTargets -KeysOrIds $InstallApps -Preset $InstallPreset)
+        }
+        if ($cliTargets.Count -gt 0 -or $UpgradeAll) {
+            Write-Host ""
+            Write-Host "=== Running Silent App Installer Queue ===" -ForegroundColor Cyan
+            $cliInstResults = @(Invoke-SilentAppInstallBatch -Targets $cliTargets -UpgradeAll:$UpgradeAll -DryRun:$DryRun -ConsoleOutput)
+            foreach ($ri in $cliInstResults) {
+                $col = if ($ri.Success) { 'Green' } else { 'Red' }
+                Write-Host ("  [{0}] {1} -> {2}" -f $(if ($ri.Success) { 'OK' } else { 'FAIL' }), $ri.Name, $ri.Status) -ForegroundColor $col
+            }
+        }
 
         $safeModel = ($sysInfo.Model -replace '[^A-Za-z0-9\-_]+', '_').Trim('_')
         if ([string]::IsNullOrWhiteSpace($safeModel)) { $safeModel = 'Laptop' }

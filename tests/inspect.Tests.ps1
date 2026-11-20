@@ -239,6 +239,34 @@ try {
                 $diskHtml | Should Match 'PesterSeller'
                 $diskHtml | Should Match 'window\.__LI_SERVER__ = false;'
 
+                # Invalid Winget ID must return HTTP 400
+                $badStatus = 0
+                try {
+                    Invoke-RestMethod -Uri "$baseUrl/api/install" -Method Post -ContentType 'application/json' -Body '{"ids":["chrome; calc"]}' -TimeoutSec 3 | Out-Null
+                } catch {
+                    if ($_.Exception.Response) { $badStatus = [int]$_.Exception.Response.StatusCode }
+                }
+                $badStatus | Should Be 400
+
+                # Valid DryRun batch returns HTTP 202 and completes asynchronously
+                $instStart = Invoke-RestMethod -Uri "$baseUrl/api/install" -Method Post -ContentType 'application/json' -Body '{"ids":["chrome","7zip"],"dryRun":true}' -TimeoutSec 3
+                $instStart.ok | Should Be $true
+                $instStart.total | Should Be 2
+
+                $finalSt = $null
+                for ($poll = 0; $poll -lt 30; $poll++) {
+                    Start-Sleep -Milliseconds 150
+                    $st = Invoke-RestMethod -Uri "$baseUrl/api/install/status" -Method Get -TimeoutSec 3
+                    if (-not $st.Running -and $st.State -eq 'Completed') {
+                        $finalSt = $st
+                        break
+                    }
+                }
+                $finalSt | Should Not BeNullOrEmpty
+                $finalSt.Results.Count | Should Be 2
+                $finalSt.Results[0].Status | Should Be 'DryRun OK'
+                $finalSt.Results[1].Status | Should Be 'DryRun OK'
+
                 $shutResp = Invoke-RestMethod -Uri "$baseUrl/api/shutdown" -Method Post -TimeoutSec 3
                 $shutResp.ok | Should Be $true
 
@@ -249,6 +277,67 @@ try {
                 if (Test-Path -LiteralPath $tmpDir) {
                     Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
                 }
+            }
+        }
+    }
+
+    Describe 'Silent App Installer (65-installer.ps1)' {
+        It 'Catalog contains >= 35 apps with unique keys and safe Winget IDs' {
+            $cat = Get-AppCatalog
+            ($cat.Count -ge 35) | Should Be $true
+            $keys = @($cat | Select-Object -ExpandProperty Key -Unique)
+            $keys.Count | Should Be $cat.Count
+            foreach ($item in $cat) {
+                Test-SafeWingetId -Id $item.WingetId | Should Be $true
+            }
+        }
+
+        It 'Test-SafeWingetId accepts valid IDs and blocks shell/injection strings' {
+            Test-SafeWingetId -Id 'Google.Chrome' | Should Be $true
+            Test-SafeWingetId -Id 'Microsoft.VCRedist.2015+.x64' | Should Be $true
+            Test-SafeWingetId -Id '9NKSQGP7F2NH' | Should Be $true
+            Test-SafeWingetId -Id 'chrome; calc' | Should Be $false
+            Test-SafeWingetId -Id 'foo|bar' | Should Be $false
+            Test-SafeWingetId -Id '$(whoami)' | Should Be $false
+            Test-SafeWingetId -Id '' | Should Be $false
+        }
+
+        It 'Resolve-InstallTargets resolves presets, mixed IDs, deduplicates, and rejects invalid IDs' {
+            $res = Resolve-InstallTargets -Preset 'essentials' -KeysOrIds @('chrome', 'Mozilla.Thunderbird')
+            $res.Count | Should Be 9
+            @($res | Where-Object { $_.WingetId -eq 'Google.Chrome' }).Count | Should Be 1
+            @($res | Where-Object { $_.WingetId -eq 'Mozilla.Thunderbird' }).Count | Should Be 1
+            { Resolve-InstallTargets -KeysOrIds @('bad&id') } | Should Throw
+        }
+
+        It 'Build-WingetInstallArgs includes silent and zero-prompt agreement flags' {
+            $args = Build-WingetInstallArgs -WingetId 'Google.Chrome' -Source 'winget'
+            ($args -contains '--silent') | Should Be $true
+            ($args -contains '--accept-package-agreements') | Should Be $true
+            ($args -contains '--accept-source-agreements') | Should Be $true
+            ($args -contains '--disable-interactivity') | Should Be $true
+            ($args -contains '--exact') | Should Be $true
+        }
+
+        It 'ConvertTo-WingetInstallResult maps standard Winget exit codes accurately' {
+            (ConvertTo-WingetInstallResult -ExitCode 0).Status | Should Be 'Installed'
+            (ConvertTo-WingetInstallResult -ExitCode -1978335189).Status | Should Be 'Already Installed'
+            (ConvertTo-WingetInstallResult -ExitCode 3010).Status | Should Be 'Installed (Reboot Needed)'
+            $fail = ConvertTo-WingetInstallResult -ExitCode 5 -OutputLines @('Package failed')
+            $fail.Success | Should Be $false
+            $fail.Status | Should Match 'Failed \(Exit 5\)'
+        }
+
+        It 'Runs CLI -InstallPreset essentials -InstallOnly -DryRun end-to-end cleanly' {
+            $prevImport = $env:LAPTOP_INSPECT_IMPORT_ONLY
+            Remove-Item Env:\LAPTOP_INSPECT_IMPORT_ONLY -ErrorAction SilentlyContinue
+            try {
+                $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $builtScript -InstallPreset essentials -InstallOnly -DryRun -NoElevate
+                $LASTEXITCODE | Should Be 0
+                ($out -join "`n") | Should Match 'Google\.Chrome'
+                ($out -join "`n") | Should Match '--accept-package-agreements'
+            } finally {
+                $env:LAPTOP_INSPECT_IMPORT_ONLY = $prevImport
             }
         }
     }

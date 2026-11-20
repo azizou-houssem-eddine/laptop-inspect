@@ -217,6 +217,23 @@ input[type="text"], input[type="number"], select, textarea {
   background: #0b1220; color: #d1fae5; font-family: Consolas, monospace; font-size: 12px;
   padding: 10px; border-radius: 7px; max-height: 180px; overflow-y: auto; border: 1px solid var(--border);
 }
+.inst-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
+@media (max-width: 960px) { .inst-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px) { .inst-grid { grid-template-columns: 1fr; } }
+.inst-cat {
+  border: 1px solid var(--border); background: var(--surface-2); border-radius: 8px; padding: 10px;
+}
+.inst-cat-title {
+  font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--accent); margin: 0 0 8px 0; padding-bottom: 5px; border-bottom: 1px solid var(--border);
+}
+.inst-item {
+  display: flex; align-items: flex-start; gap: 7px; padding: 4px 2px; cursor: pointer; font-size: 13px;
+}
+.inst-item input { margin-top: 3px; cursor: pointer; }
+.inst-item small { display: block; font-size: 11px; color: var(--muted); }
+.prog-track { width: 100%; height: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; margin: 8px 0; }
+.prog-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.25s; }
 
 @media print {
   body { background: #fff !important; color: #000 !important; font-size: 11px; }
@@ -238,6 +255,7 @@ input[type="text"], input[type="number"], select, textarea {
     </div>
     <div class="btn-row">
       <button class="btn btn-primary btn-sm" onclick="scrollToWizard()">Start Guided Tests</button>
+      <button class="btn btn-sm" onclick="scrollToInstaller()">Silent App Installer</button>
       <button class="btn btn-pass btn-sm" id="btn-save-report" onclick="saveCompletedReport()">Save Completed Report</button>
       <button class="btn btn-sm" onclick="window.print()">Print / Save PDF</button>
       <button class="btn btn-sm" onclick="copyTextSummary()">Copy Text / WhatsApp</button>
@@ -556,6 +574,45 @@ input[type="text"], input[type="number"], select, textarea {
         <button class="btn btn-fail btn-sm" onclick="setStepResult('FAIL')">FAIL</button>
         <button class="btn btn-sm" onclick="setStepResult('NA')">N/A</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Section 4: Silent Automatic Software Installer (Ninite / WinUtil Style) -->
+  <div class="card no-print" id="installer-card">
+    <h2>
+      <span>4. Silent Automatic Software Installer (Zero Prompts)</span>
+      <span class="badge b-info" id="inst-winget-badge">Checking Winget...</span>
+    </h2>
+    <p style="margin:0 0 10px 0; color:var(--muted);">
+      Select essential buyer software or a 1-click preset and install completely silently (<code>--silent --accept-package-agreements --accept-source-agreements --disable-interactivity</code>) with zero Next/Accept prompts.
+    </p>
+    <div class="btn-row" id="inst-presets-bar" style="margin-bottom:10px;"></div>
+    <div class="inst-grid" id="inst-grid"></div>
+    <div class="grid-2" style="margin-top:12px; align-items:end;">
+      <label class="field">Additional Custom Winget IDs (comma-separated, e.g. Mozilla.Thunderbird, OBSProject.OBSStudio)
+        <input type="text" id="inst-custom" placeholder="Optional Winget IDs...">
+      </label>
+      <div class="btn-row">
+        <label style="font-size:12px; display:inline-flex; align-items:center; gap:5px;">
+          <input type="checkbox" id="inst-dryrun"> Dry-Run Preview
+        </label>
+        <button class="btn btn-primary btn-sm" id="btn-inst-run" onclick="startSilentInstall(false)">Install Selected Silently (<span id="inst-sel-count">0</span>)</button>
+        <button class="btn btn-sm" id="btn-inst-upg" onclick="startSilentInstall(true)">Upgrade All Existing Apps</button>
+        <button class="btn btn-fail btn-sm" id="btn-inst-cancel" style="display:none;" onclick="cancelSilentInstall()">Cancel Queue</button>
+        <button class="btn btn-sm" onclick="copyInstallOneLiner()">Copy PS Command</button>
+      </div>
+    </div>
+    <div id="inst-offline-note" class="alert alert-info" style="display:none; margin-top:10px;">
+      Opened offline via <code>file://</code>. Live background installation requires running via the script server, or click <strong>Copy PS Command</strong> to run the zero-prompt Winget queue in PowerShell.
+    </div>
+    <div id="inst-progress-wrap" style="display:none; margin-top:12px;">
+      <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:700;">
+        <span id="inst-status-label">Preparing...</span>
+        <span id="inst-counter-label">0 / 0</span>
+      </div>
+      <div class="prog-track"><div class="prog-fill" id="inst-bar-fill"></div></div>
+      <div id="inst-results-list" class="btn-row" style="margin-bottom:8px;"></div>
+      <div class="log-box" id="inst-log-box"></div>
     </div>
   </div>
 </div>
@@ -943,6 +1000,7 @@ input[type="text"], input[type="number"], select, textarea {
   window.nextStep = function () { window.goToStep((currentStepIdx + 1) % STEPS.length); };
   window.prevStep = function () { window.goToStep((currentStepIdx - 1 + STEPS.length) % STEPS.length); };
   window.scrollToWizard = function () { document.getElementById('wizard-card').scrollIntoView({ behavior: 'smooth' }); };
+  window.scrollToInstaller = function () { document.getElementById('installer-card').scrollIntoView({ behavior: 'smooth' }); };
 
   window.setStepResult = function (val) {
     var st = STEPS[currentStepIdx];
@@ -1664,6 +1722,207 @@ input[type="text"], input[type="number"], select, textarea {
     try { localStorage.setItem('li-theme', next); } catch (e) {}
   };
 
+  // ---- Section 4: Silent Automatic Software Installer ----
+  var instSelected = {};
+  var instPollTimer = null;
+
+  function updateInstallerCount() {
+    var cnt = Object.keys(instSelected).filter(function (k) { return !!instSelected[k]; }).length;
+    var el = document.getElementById('inst-sel-count');
+    if (el) el.textContent = String(cnt);
+  }
+
+  function renderInstallerSection() {
+    var inst = reportData.Installer || {};
+    var wg = inst.Winget || {};
+    var badge = document.getElementById('inst-winget-badge');
+    if (badge) {
+      if (wg.Available) {
+        badge.className = 'badge b-pass';
+        badge.textContent = 'Winget ' + (wg.Version || 'Ready');
+      } else {
+        badge.className = 'badge b-warn';
+        badge.textContent = 'Winget Auto-Bootstrap Ready';
+      }
+    }
+    if (window.__LI_SERVER__ !== true) {
+      var off = document.getElementById('inst-offline-note');
+      if (off) off.style.display = 'block';
+    }
+
+    var presets = toArr(inst.Presets);
+    var pbar = document.getElementById('inst-presets-bar');
+    if (pbar) {
+      pbar.innerHTML = presets.map(function (p) {
+        return '<button class="btn btn-sm" title="' + esc(p.Desc) + '" onclick="applyInstallPreset(\'' + esc(p.Key) + '\')">Preset: ' + esc(p.Name) + '</button>';
+      }).join('') + '<button class="btn btn-sm" onclick="clearInstallSelection()">Clear Selection</button>';
+    }
+
+    var cat = toArr(inst.Catalog);
+    var groups = {};
+    var catOrder = [];
+    cat.forEach(function (item) {
+      if (!groups[item.Category]) {
+        groups[item.Category] = [];
+        catOrder.push(item.Category);
+      }
+      groups[item.Category].push(item);
+    });
+
+    var grid = document.getElementById('inst-grid');
+    if (grid) {
+      grid.innerHTML = catOrder.map(function (cname) {
+        var rows = groups[cname].map(function (app) {
+          return '<label class="inst-item" title="' + esc(app.WingetId) + '">' +
+            '<input type="checkbox" class="inst-chk" data-key="' + esc(app.Key) + '" onchange="toggleInstallApp(\'' + esc(app.Key) + '\', this.checked)">' +
+            '<span><strong>' + esc(app.Name) + '</strong><small>' + esc(app.Desc) + '</small></span></label>';
+        }).join('');
+        return '<div class="inst-cat"><div class="inst-cat-title">' + esc(cname) + '</div>' + rows + '</div>';
+      }).join('');
+    }
+    updateInstallerCount();
+  }
+
+  window.toggleInstallApp = function (key, checked) {
+    if (checked) instSelected[key] = true;
+    else delete instSelected[key];
+    updateInstallerCount();
+  };
+
+  window.clearInstallSelection = function () {
+    instSelected = {};
+    var chks = document.querySelectorAll('.inst-chk');
+    for (var i = 0; i < chks.length; i++) chks[i].checked = false;
+    updateInstallerCount();
+  };
+
+  window.applyInstallPreset = function (presetKey) {
+    var presets = toArr((reportData.Installer || {}).Presets);
+    var target = presets.filter(function (p) { return p.Key === presetKey; })[0];
+    if (!target) return;
+    window.clearInstallSelection();
+    toArr(target.Apps).forEach(function (k) { instSelected[k] = true; });
+    var chks = document.querySelectorAll('.inst-chk');
+    for (var i = 0; i < chks.length; i++) {
+      var k = chks[i].getAttribute('data-key');
+      if (instSelected[k]) chks[i].checked = true;
+    }
+    updateInstallerCount();
+    showToast('Loaded preset: ' + target.Name);
+  };
+
+  function gatherSelectedIds() {
+    var ids = Object.keys(instSelected).filter(function (k) { return !!instSelected[k]; });
+    var customRaw = (document.getElementById('inst-custom').value || '').trim();
+    if (customRaw) {
+      customRaw.split(',').forEach(function (part) {
+        var t = part.trim();
+        if (t) ids.push(t);
+      });
+    }
+    return ids;
+  }
+
+  window.copyInstallOneLiner = function () {
+    var ids = gatherSelectedIds();
+    var catalog = toArr((reportData.Installer || {}).Catalog);
+    var byKey = {};
+    catalog.forEach(function (c) { byKey[c.Key] = c; });
+    if (ids.length === 0) {
+      showToast('Select at least one app first.');
+      return;
+    }
+    var cmds = ids.map(function (k) {
+      var c = byKey[k];
+      var wid = c ? c.WingetId : k;
+      var src = c ? c.Source : (/^9[A-Z0-9]{11}$/.test(k) ? 'msstore' : 'winget');
+      return 'winget install --id ' + wid + ' --exact --source ' + src + ' --silent --accept-package-agreements --accept-source-agreements --disable-interactivity';
+    });
+    var full = cmds.join('; ');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(full).then(function () { showToast('Copied silent Winget command(s)'); });
+    } else {
+      window.prompt('Copy silent Winget command:', full);
+    }
+  };
+
+  function renderInstallStatus(st) {
+    var wrap = document.getElementById('inst-progress-wrap');
+    if (!wrap) return;
+    wrap.style.display = 'block';
+    var total = st.Total || 0;
+    var cur = st.CurrentIndex || 0;
+    var pct = total > 0 ? Math.min(100, Math.round((cur / total) * 100)) : 0;
+    document.getElementById('inst-bar-fill').style.width = pct + '%';
+    document.getElementById('inst-counter-label').textContent = cur + ' / ' + total;
+    document.getElementById('inst-status-label').textContent = st.Running
+      ? ('Installing silently: ' + (st.CurrentApp || '...'))
+      : ('Queue ' + (st.State || 'Done'));
+
+    var resArr = toArr(st.Results);
+    document.getElementById('inst-results-list').innerHTML = resArr.map(function (r) {
+      var cls = r.Success ? 'b-pass' : 'b-fail';
+      return '<span class="badge ' + cls + '" title="' + esc(r.Detail || '') + '">' + esc(r.Name + ': ' + r.Status) + '</span>';
+    }).join('');
+
+    var logBox = document.getElementById('inst-log-box');
+    logBox.textContent = toArr(st.Logs).join('\n');
+    logBox.scrollTop = logBox.scrollHeight;
+
+    var cancelBtn = document.getElementById('btn-inst-cancel');
+    var runBtn = document.getElementById('btn-inst-run');
+    var upgBtn = document.getElementById('btn-inst-upg');
+    if (st.Running) {
+      cancelBtn.style.display = 'inline-flex';
+      runBtn.disabled = true;
+      upgBtn.disabled = true;
+    } else {
+      cancelBtn.style.display = 'none';
+      runBtn.disabled = false;
+      upgBtn.disabled = false;
+      if (instPollTimer) { clearInterval(instPollTimer); instPollTimer = null; }
+    }
+  }
+
+  function pollInstallStatus() {
+    fetch('/api/install/status').then(function (r) { return r.json(); }).then(function (st) {
+      renderInstallStatus(st);
+    }).catch(function () {});
+  }
+
+  window.startSilentInstall = function (upgradeAll) {
+    if (window.__LI_SERVER__ !== true) {
+      showToast('Offline HTML cannot run Winget directly. Use Copy PS Command.');
+      return;
+    }
+    var ids = gatherSelectedIds();
+    if (!upgradeAll && ids.length === 0) {
+      showToast('Select at least one app or preset.');
+      return;
+    }
+    var dry = !!document.getElementById('inst-dryrun').checked;
+    fetch('/api/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids, upgradeAll: !!upgradeAll, dryRun: dry })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (!res || !res.ok) {
+        showToast((res && res.error) ? res.error : 'Failed to start installer queue');
+        return;
+      }
+      showToast('Started silent install queue (' + res.total + ' item(s))');
+      if (instPollTimer) clearInterval(instPollTimer);
+      pollInstallStatus();
+      instPollTimer = setInterval(pollInstallStatus, 1200);
+    }).catch(function () { showToast('Install request error'); });
+  };
+
+  window.cancelSilentInstall = function () {
+    fetch('/api/install/cancel', { method: 'POST' }).then(function () {
+      showToast('Cancellation requested (finishing current app)...');
+    }).catch(function () {});
+  };
+
   // Init
   try {
     var savedTheme = localStorage.getItem('li-theme');
@@ -1678,6 +1937,7 @@ input[type="text"], input[type="number"], select, textarea {
   restoreManualInputs();
   renderWizardPills();
   renderTopAndScoring();
+  renderInstallerSection();
 })();
 </script>
 </body>

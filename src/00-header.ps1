@@ -17,13 +17,18 @@ param(
     [switch]$NoElevate,
     [switch]$JsonOnly,
     [string]$OutDir = '',
+    [string]$InstallPreset = '',
+    [string[]]$InstallApps = @(),
+    [switch]$UpgradeAll,
+    [switch]$InstallOnly,
+    [switch]$DryRun,
     [string]$CleanupTempPath = ''
 )
 
 $ErrorActionPreference = 'Continue'
 $script:SelfSource = $MyInvocation.MyCommand.Definition
 $script:ToolName = 'LaptopInspect'
-$script:ToolVersion = '1.0.0'
+$script:ToolVersion = '1.1.0'
 $script:RepoUrl = 'https://github.com/azizou-houssem-eddine/laptop-inspect'
 $script:ScriptStartTime = Get-Date
 
@@ -34,6 +39,17 @@ if ($env:LI_NO_ELEVATE -eq '1') { $NoElevate = $true }
 if ($env:LI_NO_BROWSER -eq '1') { $NoBrowser = $true }
 if ($env:LI_NO_SERVER -eq '1') { $NoServer = $true }
 if ($env:LI_JSON_ONLY -eq '1') { $JsonOnly = $true }
+if ($env:LI_INSTALL_ONLY -eq '1') { $InstallOnly = $true }
+if ($env:LI_UPGRADE_ALL -eq '1') { $UpgradeAll = $true }
+if ($env:LI_DRY_RUN -eq '1') { $DryRun = $true }
+if (-not [string]::IsNullOrWhiteSpace($env:LI_INSTALL)) {
+    $rawInst = $env:LI_INSTALL.Trim()
+    if ($rawInst -match '^(essentials|office|tech|dev)$' -and [string]::IsNullOrWhiteSpace($InstallPreset)) {
+        $InstallPreset = $rawInst.ToLowerInvariant()
+    } elseif ($InstallApps.Count -eq 0) {
+        $InstallApps = @($rawInst)
+    }
+}
 if ($env:LI_STRESS_SECONDS -match '^\d+$') { $StressSeconds = [int]$env:LI_STRESS_SECONDS }
 if ([string]::IsNullOrWhiteSpace($OutDir) -and -not [string]::IsNullOrWhiteSpace($env:LI_OUTDIR)) {
     $OutDir = $env:LI_OUTDIR
@@ -146,7 +162,12 @@ function Request-OptionalElevation {
         [switch]$NoBrowserFlag,
         [switch]$NoServerFlag,
         [switch]$JsonOnlyFlag,
-        [string]$TargetOutDir
+        [string]$TargetOutDir,
+        [string]$PresetFlag = '',
+        [string[]]$AppsFlag = @(),
+        [switch]$UpgradeAllFlag,
+        [switch]$InstallOnlyFlag,
+        [switch]$DryRunFlag
     )
     if (Test-IsAdmin) { return $false }
     if ($NoElevate) { return $false }
@@ -186,6 +207,14 @@ function Request-OptionalElevation {
     if ($NoBrowserFlag) { $argParts += '-NoBrowser' }
     if ($NoServerFlag) { $argParts += '-NoServer' }
     if ($JsonOnlyFlag) { $argParts += '-JsonOnly' }
+    if (-not [string]::IsNullOrWhiteSpace($PresetFlag)) { $argParts += ('-InstallPreset "{0}"' -f $PresetFlag) }
+    if ($AppsFlag -and $AppsFlag.Count -gt 0) {
+        $joinedApps = ($AppsFlag -join ',')
+        if (-not [string]::IsNullOrWhiteSpace($joinedApps)) { $argParts += ('-InstallApps "{0}"' -f $joinedApps) }
+    }
+    if ($UpgradeAllFlag) { $argParts += '-UpgradeAll' }
+    if ($InstallOnlyFlag) { $argParts += '-InstallOnly' }
+    if ($DryRunFlag) { $argParts += '-DryRun' }
     if (-not [string]::IsNullOrWhiteSpace($TargetOutDir)) { $argParts += ('-OutDir "{0}"' -f $TargetOutDir) }
     if (-not [string]::IsNullOrWhiteSpace($tempPath)) { $argParts += ('-CleanupTempPath "{0}"' -f $tempPath) }
 

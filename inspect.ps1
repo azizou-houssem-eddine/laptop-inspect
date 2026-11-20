@@ -18,13 +18,18 @@ param(
     [switch]$NoElevate,
     [switch]$JsonOnly,
     [string]$OutDir = '',
+    [string]$InstallPreset = '',
+    [string[]]$InstallApps = @(),
+    [switch]$UpgradeAll,
+    [switch]$InstallOnly,
+    [switch]$DryRun,
     [string]$CleanupTempPath = ''
 )
 
 $ErrorActionPreference = 'Continue'
 $script:SelfSource = $MyInvocation.MyCommand.Definition
 $script:ToolName = 'LaptopInspect'
-$script:ToolVersion = '1.0.0'
+$script:ToolVersion = '1.1.0'
 $script:RepoUrl = 'https://github.com/azizou-houssem-eddine/laptop-inspect'
 $script:ScriptStartTime = Get-Date
 
@@ -35,6 +40,17 @@ if ($env:LI_NO_ELEVATE -eq '1') { $NoElevate = $true }
 if ($env:LI_NO_BROWSER -eq '1') { $NoBrowser = $true }
 if ($env:LI_NO_SERVER -eq '1') { $NoServer = $true }
 if ($env:LI_JSON_ONLY -eq '1') { $JsonOnly = $true }
+if ($env:LI_INSTALL_ONLY -eq '1') { $InstallOnly = $true }
+if ($env:LI_UPGRADE_ALL -eq '1') { $UpgradeAll = $true }
+if ($env:LI_DRY_RUN -eq '1') { $DryRun = $true }
+if (-not [string]::IsNullOrWhiteSpace($env:LI_INSTALL)) {
+    $rawInst = $env:LI_INSTALL.Trim()
+    if ($rawInst -match '^(essentials|office|tech|dev)$' -and [string]::IsNullOrWhiteSpace($InstallPreset)) {
+        $InstallPreset = $rawInst.ToLowerInvariant()
+    } elseif ($InstallApps.Count -eq 0) {
+        $InstallApps = @($rawInst)
+    }
+}
 if ($env:LI_STRESS_SECONDS -match '^\d+$') { $StressSeconds = [int]$env:LI_STRESS_SECONDS }
 if ([string]::IsNullOrWhiteSpace($OutDir) -and -not [string]::IsNullOrWhiteSpace($env:LI_OUTDIR)) {
     $OutDir = $env:LI_OUTDIR
@@ -147,7 +163,12 @@ function Request-OptionalElevation {
         [switch]$NoBrowserFlag,
         [switch]$NoServerFlag,
         [switch]$JsonOnlyFlag,
-        [string]$TargetOutDir
+        [string]$TargetOutDir,
+        [string]$PresetFlag = '',
+        [string[]]$AppsFlag = @(),
+        [switch]$UpgradeAllFlag,
+        [switch]$InstallOnlyFlag,
+        [switch]$DryRunFlag
     )
     if (Test-IsAdmin) { return $false }
     if ($NoElevate) { return $false }
@@ -187,6 +208,14 @@ function Request-OptionalElevation {
     if ($NoBrowserFlag) { $argParts += '-NoBrowser' }
     if ($NoServerFlag) { $argParts += '-NoServer' }
     if ($JsonOnlyFlag) { $argParts += '-JsonOnly' }
+    if (-not [string]::IsNullOrWhiteSpace($PresetFlag)) { $argParts += ('-InstallPreset "{0}"' -f $PresetFlag) }
+    if ($AppsFlag -and $AppsFlag.Count -gt 0) {
+        $joinedApps = ($AppsFlag -join ',')
+        if (-not [string]::IsNullOrWhiteSpace($joinedApps)) { $argParts += ('-InstallApps "{0}"' -f $joinedApps) }
+    }
+    if ($UpgradeAllFlag) { $argParts += '-UpgradeAll' }
+    if ($InstallOnlyFlag) { $argParts += '-InstallOnly' }
+    if ($DryRunFlag) { $argParts += '-DryRun' }
     if (-not [string]::IsNullOrWhiteSpace($TargetOutDir)) { $argParts += ('-OutDir "{0}"' -f $TargetOutDir) }
     if (-not [string]::IsNullOrWhiteSpace($tempPath)) { $argParts += ('-CleanupTempPath "{0}"' -f $tempPath) }
 
@@ -424,6 +453,23 @@ input[type="text"], input[type="number"], select, textarea {
   background: #0b1220; color: #d1fae5; font-family: Consolas, monospace; font-size: 12px;
   padding: 10px; border-radius: 7px; max-height: 180px; overflow-y: auto; border: 1px solid var(--border);
 }
+.inst-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
+@media (max-width: 960px) { .inst-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px) { .inst-grid { grid-template-columns: 1fr; } }
+.inst-cat {
+  border: 1px solid var(--border); background: var(--surface-2); border-radius: 8px; padding: 10px;
+}
+.inst-cat-title {
+  font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--accent); margin: 0 0 8px 0; padding-bottom: 5px; border-bottom: 1px solid var(--border);
+}
+.inst-item {
+  display: flex; align-items: flex-start; gap: 7px; padding: 4px 2px; cursor: pointer; font-size: 13px;
+}
+.inst-item input { margin-top: 3px; cursor: pointer; }
+.inst-item small { display: block; font-size: 11px; color: var(--muted); }
+.prog-track { width: 100%; height: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; margin: 8px 0; }
+.prog-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.25s; }
 
 @media print {
   body { background: #fff !important; color: #000 !important; font-size: 11px; }
@@ -445,6 +491,7 @@ input[type="text"], input[type="number"], select, textarea {
     </div>
     <div class="btn-row">
       <button class="btn btn-primary btn-sm" onclick="scrollToWizard()">Start Guided Tests</button>
+      <button class="btn btn-sm" onclick="scrollToInstaller()">Silent App Installer</button>
       <button class="btn btn-pass btn-sm" id="btn-save-report" onclick="saveCompletedReport()">Save Completed Report</button>
       <button class="btn btn-sm" onclick="window.print()">Print / Save PDF</button>
       <button class="btn btn-sm" onclick="copyTextSummary()">Copy Text / WhatsApp</button>
@@ -763,6 +810,45 @@ input[type="text"], input[type="number"], select, textarea {
         <button class="btn btn-fail btn-sm" onclick="setStepResult('FAIL')">FAIL</button>
         <button class="btn btn-sm" onclick="setStepResult('NA')">N/A</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Section 4: Silent Automatic Software Installer (Ninite / WinUtil Style) -->
+  <div class="card no-print" id="installer-card">
+    <h2>
+      <span>4. Silent Automatic Software Installer (Zero Prompts)</span>
+      <span class="badge b-info" id="inst-winget-badge">Checking Winget...</span>
+    </h2>
+    <p style="margin:0 0 10px 0; color:var(--muted);">
+      Select essential buyer software or a 1-click preset and install completely silently (<code>--silent --accept-package-agreements --accept-source-agreements --disable-interactivity</code>) with zero Next/Accept prompts.
+    </p>
+    <div class="btn-row" id="inst-presets-bar" style="margin-bottom:10px;"></div>
+    <div class="inst-grid" id="inst-grid"></div>
+    <div class="grid-2" style="margin-top:12px; align-items:end;">
+      <label class="field">Additional Custom Winget IDs (comma-separated, e.g. Mozilla.Thunderbird, OBSProject.OBSStudio)
+        <input type="text" id="inst-custom" placeholder="Optional Winget IDs...">
+      </label>
+      <div class="btn-row">
+        <label style="font-size:12px; display:inline-flex; align-items:center; gap:5px;">
+          <input type="checkbox" id="inst-dryrun"> Dry-Run Preview
+        </label>
+        <button class="btn btn-primary btn-sm" id="btn-inst-run" onclick="startSilentInstall(false)">Install Selected Silently (<span id="inst-sel-count">0</span>)</button>
+        <button class="btn btn-sm" id="btn-inst-upg" onclick="startSilentInstall(true)">Upgrade All Existing Apps</button>
+        <button class="btn btn-fail btn-sm" id="btn-inst-cancel" style="display:none;" onclick="cancelSilentInstall()">Cancel Queue</button>
+        <button class="btn btn-sm" onclick="copyInstallOneLiner()">Copy PS Command</button>
+      </div>
+    </div>
+    <div id="inst-offline-note" class="alert alert-info" style="display:none; margin-top:10px;">
+      Opened offline via <code>file://</code>. Live background installation requires running via the script server, or click <strong>Copy PS Command</strong> to run the zero-prompt Winget queue in PowerShell.
+    </div>
+    <div id="inst-progress-wrap" style="display:none; margin-top:12px;">
+      <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:700;">
+        <span id="inst-status-label">Preparing...</span>
+        <span id="inst-counter-label">0 / 0</span>
+      </div>
+      <div class="prog-track"><div class="prog-fill" id="inst-bar-fill"></div></div>
+      <div id="inst-results-list" class="btn-row" style="margin-bottom:8px;"></div>
+      <div class="log-box" id="inst-log-box"></div>
     </div>
   </div>
 </div>
@@ -1150,6 +1236,7 @@ input[type="text"], input[type="number"], select, textarea {
   window.nextStep = function () { window.goToStep((currentStepIdx + 1) % STEPS.length); };
   window.prevStep = function () { window.goToStep((currentStepIdx - 1 + STEPS.length) % STEPS.length); };
   window.scrollToWizard = function () { document.getElementById('wizard-card').scrollIntoView({ behavior: 'smooth' }); };
+  window.scrollToInstaller = function () { document.getElementById('installer-card').scrollIntoView({ behavior: 'smooth' }); };
 
   window.setStepResult = function (val) {
     var st = STEPS[currentStepIdx];
@@ -1871,6 +1958,207 @@ input[type="text"], input[type="number"], select, textarea {
     try { localStorage.setItem('li-theme', next); } catch (e) {}
   };
 
+  // ---- Section 4: Silent Automatic Software Installer ----
+  var instSelected = {};
+  var instPollTimer = null;
+
+  function updateInstallerCount() {
+    var cnt = Object.keys(instSelected).filter(function (k) { return !!instSelected[k]; }).length;
+    var el = document.getElementById('inst-sel-count');
+    if (el) el.textContent = String(cnt);
+  }
+
+  function renderInstallerSection() {
+    var inst = reportData.Installer || {};
+    var wg = inst.Winget || {};
+    var badge = document.getElementById('inst-winget-badge');
+    if (badge) {
+      if (wg.Available) {
+        badge.className = 'badge b-pass';
+        badge.textContent = 'Winget ' + (wg.Version || 'Ready');
+      } else {
+        badge.className = 'badge b-warn';
+        badge.textContent = 'Winget Auto-Bootstrap Ready';
+      }
+    }
+    if (window.__LI_SERVER__ !== true) {
+      var off = document.getElementById('inst-offline-note');
+      if (off) off.style.display = 'block';
+    }
+
+    var presets = toArr(inst.Presets);
+    var pbar = document.getElementById('inst-presets-bar');
+    if (pbar) {
+      pbar.innerHTML = presets.map(function (p) {
+        return '<button class="btn btn-sm" title="' + esc(p.Desc) + '" onclick="applyInstallPreset(\'' + esc(p.Key) + '\')">Preset: ' + esc(p.Name) + '</button>';
+      }).join('') + '<button class="btn btn-sm" onclick="clearInstallSelection()">Clear Selection</button>';
+    }
+
+    var cat = toArr(inst.Catalog);
+    var groups = {};
+    var catOrder = [];
+    cat.forEach(function (item) {
+      if (!groups[item.Category]) {
+        groups[item.Category] = [];
+        catOrder.push(item.Category);
+      }
+      groups[item.Category].push(item);
+    });
+
+    var grid = document.getElementById('inst-grid');
+    if (grid) {
+      grid.innerHTML = catOrder.map(function (cname) {
+        var rows = groups[cname].map(function (app) {
+          return '<label class="inst-item" title="' + esc(app.WingetId) + '">' +
+            '<input type="checkbox" class="inst-chk" data-key="' + esc(app.Key) + '" onchange="toggleInstallApp(\'' + esc(app.Key) + '\', this.checked)">' +
+            '<span><strong>' + esc(app.Name) + '</strong><small>' + esc(app.Desc) + '</small></span></label>';
+        }).join('');
+        return '<div class="inst-cat"><div class="inst-cat-title">' + esc(cname) + '</div>' + rows + '</div>';
+      }).join('');
+    }
+    updateInstallerCount();
+  }
+
+  window.toggleInstallApp = function (key, checked) {
+    if (checked) instSelected[key] = true;
+    else delete instSelected[key];
+    updateInstallerCount();
+  };
+
+  window.clearInstallSelection = function () {
+    instSelected = {};
+    var chks = document.querySelectorAll('.inst-chk');
+    for (var i = 0; i < chks.length; i++) chks[i].checked = false;
+    updateInstallerCount();
+  };
+
+  window.applyInstallPreset = function (presetKey) {
+    var presets = toArr((reportData.Installer || {}).Presets);
+    var target = presets.filter(function (p) { return p.Key === presetKey; })[0];
+    if (!target) return;
+    window.clearInstallSelection();
+    toArr(target.Apps).forEach(function (k) { instSelected[k] = true; });
+    var chks = document.querySelectorAll('.inst-chk');
+    for (var i = 0; i < chks.length; i++) {
+      var k = chks[i].getAttribute('data-key');
+      if (instSelected[k]) chks[i].checked = true;
+    }
+    updateInstallerCount();
+    showToast('Loaded preset: ' + target.Name);
+  };
+
+  function gatherSelectedIds() {
+    var ids = Object.keys(instSelected).filter(function (k) { return !!instSelected[k]; });
+    var customRaw = (document.getElementById('inst-custom').value || '').trim();
+    if (customRaw) {
+      customRaw.split(',').forEach(function (part) {
+        var t = part.trim();
+        if (t) ids.push(t);
+      });
+    }
+    return ids;
+  }
+
+  window.copyInstallOneLiner = function () {
+    var ids = gatherSelectedIds();
+    var catalog = toArr((reportData.Installer || {}).Catalog);
+    var byKey = {};
+    catalog.forEach(function (c) { byKey[c.Key] = c; });
+    if (ids.length === 0) {
+      showToast('Select at least one app first.');
+      return;
+    }
+    var cmds = ids.map(function (k) {
+      var c = byKey[k];
+      var wid = c ? c.WingetId : k;
+      var src = c ? c.Source : (/^9[A-Z0-9]{11}$/.test(k) ? 'msstore' : 'winget');
+      return 'winget install --id ' + wid + ' --exact --source ' + src + ' --silent --accept-package-agreements --accept-source-agreements --disable-interactivity';
+    });
+    var full = cmds.join('; ');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(full).then(function () { showToast('Copied silent Winget command(s)'); });
+    } else {
+      window.prompt('Copy silent Winget command:', full);
+    }
+  };
+
+  function renderInstallStatus(st) {
+    var wrap = document.getElementById('inst-progress-wrap');
+    if (!wrap) return;
+    wrap.style.display = 'block';
+    var total = st.Total || 0;
+    var cur = st.CurrentIndex || 0;
+    var pct = total > 0 ? Math.min(100, Math.round((cur / total) * 100)) : 0;
+    document.getElementById('inst-bar-fill').style.width = pct + '%';
+    document.getElementById('inst-counter-label').textContent = cur + ' / ' + total;
+    document.getElementById('inst-status-label').textContent = st.Running
+      ? ('Installing silently: ' + (st.CurrentApp || '...'))
+      : ('Queue ' + (st.State || 'Done'));
+
+    var resArr = toArr(st.Results);
+    document.getElementById('inst-results-list').innerHTML = resArr.map(function (r) {
+      var cls = r.Success ? 'b-pass' : 'b-fail';
+      return '<span class="badge ' + cls + '" title="' + esc(r.Detail || '') + '">' + esc(r.Name + ': ' + r.Status) + '</span>';
+    }).join('');
+
+    var logBox = document.getElementById('inst-log-box');
+    logBox.textContent = toArr(st.Logs).join('\n');
+    logBox.scrollTop = logBox.scrollHeight;
+
+    var cancelBtn = document.getElementById('btn-inst-cancel');
+    var runBtn = document.getElementById('btn-inst-run');
+    var upgBtn = document.getElementById('btn-inst-upg');
+    if (st.Running) {
+      cancelBtn.style.display = 'inline-flex';
+      runBtn.disabled = true;
+      upgBtn.disabled = true;
+    } else {
+      cancelBtn.style.display = 'none';
+      runBtn.disabled = false;
+      upgBtn.disabled = false;
+      if (instPollTimer) { clearInterval(instPollTimer); instPollTimer = null; }
+    }
+  }
+
+  function pollInstallStatus() {
+    fetch('/api/install/status').then(function (r) { return r.json(); }).then(function (st) {
+      renderInstallStatus(st);
+    }).catch(function () {});
+  }
+
+  window.startSilentInstall = function (upgradeAll) {
+    if (window.__LI_SERVER__ !== true) {
+      showToast('Offline HTML cannot run Winget directly. Use Copy PS Command.');
+      return;
+    }
+    var ids = gatherSelectedIds();
+    if (!upgradeAll && ids.length === 0) {
+      showToast('Select at least one app or preset.');
+      return;
+    }
+    var dry = !!document.getElementById('inst-dryrun').checked;
+    fetch('/api/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids, upgradeAll: !!upgradeAll, dryRun: dry })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (!res || !res.ok) {
+        showToast((res && res.error) ? res.error : 'Failed to start installer queue');
+        return;
+      }
+      showToast('Started silent install queue (' + res.total + ' item(s))');
+      if (instPollTimer) clearInterval(instPollTimer);
+      pollInstallStatus();
+      instPollTimer = setInterval(pollInstallStatus, 1200);
+    }).catch(function () { showToast('Install request error'); });
+  };
+
+  window.cancelSilentInstall = function () {
+    fetch('/api/install/cancel', { method: 'POST' }).then(function () {
+      showToast('Cancellation requested (finishing current app)...');
+    }).catch(function () {});
+  };
+
   // Init
   try {
     var savedTheme = localStorage.getItem('li-theme');
@@ -1885,6 +2173,7 @@ input[type="text"], input[type="number"], select, textarea {
   restoreManualInputs();
   renderWizardPills();
   renderTopAndScoring();
+  renderInstallerSection();
 })();
 </script>
 </body>
@@ -3849,6 +4138,415 @@ function Get-PeripheralsAndNetwork {
 }
 # --- END 60-peripherals.ps1 ---
 
+# --- BEGIN 65-installer.ps1 ---
+function Get-AppCatalog {
+    return @(
+        # Browsers
+        [PSCustomObject]@{ Key='chrome';  Name='Google Chrome';   WingetId='Google.Chrome';   Source='winget'; Category='Browsers'; Desc='Popular fast web browser' },
+        [PSCustomObject]@{ Key='firefox'; Name='Mozilla Firefox'; WingetId='Mozilla.Firefox'; Source='winget'; Category='Browsers'; Desc='Open-source privacy browser' },
+        [PSCustomObject]@{ Key='brave';   Name='Brave Browser';   WingetId='Brave.Brave';     Source='winget'; Category='Browsers'; Desc='Ad-blocking Chromium browser' },
+
+        # Essentials & Office
+        [PSCustomObject]@{ Key='7zip';        Name='7-Zip';           WingetId='7zip.7zip';                         Source='winget'; Category='Essentials & Office'; Desc='Open-source archive extractor' },
+        [PSCustomObject]@{ Key='winrar';      Name='WinRAR';          WingetId='RARLab.WinRAR';                     Source='winget'; Category='Essentials & Office'; Desc='RAR/ZIP archiver' },
+        [PSCustomObject]@{ Key='acrobat';     Name='Adobe Acrobat';   WingetId='Adobe.Acrobat.Reader.64-bit';       Source='winget'; Category='Essentials & Office'; Desc='Standard PDF reader (64-bit)' },
+        [PSCustomObject]@{ Key='sumatra';     Name='SumatraPDF';      WingetId='SumatraPDF.SumatraPDF';             Source='winget'; Category='Essentials & Office'; Desc='Ultra-fast lightweight PDF viewer' },
+        [PSCustomObject]@{ Key='libreoffice'; Name='LibreOffice';     WingetId='TheDocumentFoundation.LibreOffice'; Source='winget'; Category='Essentials & Office'; Desc='Free full Office suite' },
+        [PSCustomObject]@{ Key='notepadpp';   Name='Notepad++';       WingetId='Notepad++.Notepad++';               Source='winget'; Category='Essentials & Office'; Desc='Fast code and text editor' },
+
+        # Media & Codecs
+        [PSCustomObject]@{ Key='vlc';     Name='VLC Media Player';   WingetId='VideoLAN.VLC';                      Source='winget'; Category='Media & Codecs'; Desc='Plays almost any video or audio' },
+        [PSCustomObject]@{ Key='klite';   Name='K-Lite Codec Pack';  WingetId='CodecGuide.K-LiteCodecPack.Standard'; Source='winget'; Category='Media & Codecs'; Desc='Complete Windows video/audio codecs' },
+        [PSCustomObject]@{ Key='spotify'; Name='Spotify';            WingetId='Spotify.Spotify';                   Source='winget'; Category='Media & Codecs'; Desc='Music streaming desktop client' },
+
+        # Runtimes
+        [PSCustomObject]@{ Key='vcredist64'; Name='VC++ Redist (x64)';    WingetId='Microsoft.VCRedist.2015+.x64';    Source='winget'; Category='Runtimes'; Desc='Visual C++ 2015-2022 64-bit runtime' },
+        [PSCustomObject]@{ Key='vcredist86'; Name='VC++ Redist (x86)';    WingetId='Microsoft.VCRedist.2015+.x86';    Source='winget'; Category='Runtimes'; Desc='Visual C++ 2015-2022 32-bit runtime' },
+        [PSCustomObject]@{ Key='dotnet8';    Name='.NET 8 Desktop';       WingetId='Microsoft.DotNet.DesktopRuntime.8'; Source='winget'; Category='Runtimes'; Desc='.NET 8 WPF/WinForms runtime' },
+        [PSCustomObject]@{ Key='directx';    Name='DirectX Runtime';      WingetId='Microsoft.DirectX';               Source='winget'; Category='Runtimes'; Desc='Legacy DirectX end-user libraries' },
+        [PSCustomObject]@{ Key='java';       Name='Java Runtime (JRE)';   WingetId='Oracle.JavaRuntimeEnvironment';   Source='winget'; Category='Runtimes'; Desc='Oracle Java runtime environment' },
+
+        # Hardware Bench
+        [PSCustomObject]@{ Key='hwinfo';          Name='HWiNFO';          WingetId='REALiX.HWiNFO';                  Source='winget'; Category='Hardware Bench'; Desc='Deep hardware sensor & clock telemetry' },
+        [PSCustomObject]@{ Key='crystaldiskinfo'; Name='CrystalDiskInfo'; WingetId='CrystalDewWorld.CrystalDiskInfo'; Source='winget'; Category='Hardware Bench'; Desc='Detailed SSD/HDD SMART attributes' },
+        [PSCustomObject]@{ Key='crystaldiskmark'; Name='CrystalDiskMark'; WingetId='CrystalDewWorld.CrystalDiskMark'; Source='winget'; Category='Hardware Bench'; Desc='Storage sequential & 4K benchmark' },
+        [PSCustomObject]@{ Key='cpuz';            Name='CPU-Z';           WingetId='CPUID.CPU-Z';                    Source='winget'; Category='Hardware Bench'; Desc='CPU, cache, and memory SPD inspector' },
+        [PSCustomObject]@{ Key='gpuz';            Name='GPU-Z';           WingetId='TechPowerUp.GPU-Z';              Source='winget'; Category='Hardware Bench'; Desc='GPU ROPs, shaders, VBIOS & bus check' },
+        [PSCustomObject]@{ Key='occt';            Name='OCCT';            WingetId='OCBase.OCCT.Personal';           Source='winget'; Category='Hardware Bench'; Desc='Combined CPU/GPU/VRAM stability stress' },
+        [PSCustomObject]@{ Key='bleachbit';       Name='BleachBit';       WingetId='BleachBit.BleachBit';            Source='winget'; Category='Hardware Bench'; Desc='Open-source disk & privacy cleaner' },
+
+        # Communication & Remote
+        [PSCustomObject]@{ Key='whatsapp';   Name='WhatsApp';   WingetId='9NKSQGP7F2NH';              Source='msstore'; Category='Communication & Remote'; Desc='Official WhatsApp Desktop (MS Store)' },
+        [PSCustomObject]@{ Key='zoom';       Name='Zoom';       WingetId='Zoom.Zoom';                 Source='winget';  Category='Communication & Remote'; Desc='Video meetings & screen sharing' },
+        [PSCustomObject]@{ Key='discord';    Name='Discord';    WingetId='Discord.Discord';           Source='winget';  Category='Communication & Remote'; Desc='Voice, video, and text chat' },
+        [PSCustomObject]@{ Key='telegram';   Name='Telegram';   WingetId='Telegram.TelegramDesktop';  Source='winget';  Category='Communication & Remote'; Desc='Fast desktop messaging client' },
+        [PSCustomObject]@{ Key='anydesk';    Name='AnyDesk';    WingetId='AnyDesk.AnyDesk';           Source='winget';  Category='Communication & Remote'; Desc='Lightweight remote desktop support' },
+        [PSCustomObject]@{ Key='teamviewer'; Name='TeamViewer'; WingetId='TeamViewer.TeamViewer';     Source='winget';  Category='Communication & Remote'; Desc='Remote access & support client' },
+
+        # Utilities & Dev
+        [PSCustomObject]@{ Key='everything';  Name='Everything Search'; WingetId='voidtools.Everything';       Source='winget'; Category='Utilities & Dev'; Desc='Instant NTFS file search' },
+        [PSCustomObject]@{ Key='sharex';      Name='ShareX';            WingetId='ShareX.ShareX';              Source='winget'; Category='Utilities & Dev'; Desc='Open-source screenshot & recorder' },
+        [PSCustomObject]@{ Key='greenshot';   Name='Greenshot';         WingetId='Greenshot.Greenshot';        Source='winget'; Category='Utilities & Dev'; Desc='Quick annotated screenshot tool' },
+        [PSCustomObject]@{ Key='powertoys';   Name='MS PowerToys';      WingetId='Microsoft.PowerToys';        Source='winget'; Category='Utilities & Dev'; Desc='Windows power-user utilities' },
+        [PSCustomObject]@{ Key='qbittorrent'; Name='qBittorrent';       WingetId='qBittorrent.qBittorrent';    Source='winget'; Category='Utilities & Dev'; Desc='Open-source ad-free torrent client' },
+        [PSCustomObject]@{ Key='vscode';      Name='VS Code';           WingetId='Microsoft.VisualStudioCode'; Source='winget'; Category='Utilities & Dev'; Desc='Code editor & IDE' },
+        [PSCustomObject]@{ Key='git';         Name='Git';               WingetId='Git.Git';                    Source='winget'; Category='Utilities & Dev'; Desc='Distributed version control' },
+        [PSCustomObject]@{ Key='python';      Name='Python 3.12';       WingetId='Python.Python.3.12';         Source='winget'; Category='Utilities & Dev'; Desc='Python 3.12 runtime & pip' },
+        [PSCustomObject]@{ Key='steam';       Name='Steam';             WingetId='Valve.Steam';                Source='winget'; Category='Utilities & Dev'; Desc='PC gaming storefront & launcher' }
+    )
+}
+
+function Get-AppPresets {
+    return @(
+        [PSCustomObject]@{
+            Key   = 'essentials'
+            Name  = 'Resale Essentials'
+            Desc  = 'Ready-to-deliver Windows buyer baseline'
+            Apps  = @('chrome', 'vlc', '7zip', 'sumatra', 'vcredist64', 'vcredist86', 'dotnet8', 'directx')
+        },
+        [PSCustomObject]@{
+            Key   = 'office'
+            Name  = 'Office & Student'
+            Desc  = 'Productivity, PDF, meetings, and messaging'
+            Apps  = @('chrome', 'vlc', '7zip', 'acrobat', 'libreoffice', 'zoom', 'whatsapp', 'vcredist64')
+        },
+        [PSCustomObject]@{
+            Key   = 'tech'
+            Name  = 'Technician Bench'
+            Desc  = 'Deep sensor, SMART, CPU/GPU, and stress tools'
+            Apps  = @('hwinfo', 'crystaldiskinfo', 'crystaldiskmark', 'cpuz', 'gpuz', 'occt', '7zip', 'notepadpp', 'everything')
+        },
+        [PSCustomObject]@{
+            Key   = 'dev'
+            Name  = 'Developer Pack'
+            Desc  = 'Coding, Git, Python, and power utilities'
+            Apps  = @('chrome', 'vscode', 'git', 'python', '7zip', 'notepadpp', 'powertoys', 'everything')
+        }
+    )
+}
+
+function Test-SafeWingetId {
+    param([string]$Id)
+    if ([string]::IsNullOrWhiteSpace($Id)) { return $false }
+    return ($Id.Trim() -cmatch '^[A-Za-z0-9][A-Za-z0-9\.\-\+_]{1,80}$')
+}
+
+function Resolve-InstallTargets {
+    param(
+        [string[]]$KeysOrIds = @(),
+        [string]$Preset = ''
+    )
+
+    $catalog = Get-AppCatalog
+    $byKey = @{}
+    $byId = @{}
+    foreach ($item in $catalog) {
+        $byKey[$item.Key.ToLowerInvariant()] = $item
+        $byId[$item.WingetId.ToLowerInvariant()] = $item
+    }
+
+    $tokens = @()
+    if (-not [string]::IsNullOrWhiteSpace($Preset)) {
+        $pKey = $Preset.Trim().ToLowerInvariant()
+        $presetObj = Get-AppPresets | Where-Object { $_.Key -eq $pKey } | Select-Object -First 1
+        if (-not $presetObj) {
+            throw ("Unknown install preset: '{0}'. Valid presets: essentials, office, tech, dev." -f $Preset)
+        }
+        $tokens += @($presetObj.Apps)
+    }
+
+    foreach ($raw in $KeysOrIds) {
+        if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+        $split = $raw -split ','
+        foreach ($part in $split) {
+            $t = $part.Trim()
+            if (-not [string]::IsNullOrWhiteSpace($t)) { $tokens += $t }
+        }
+    }
+
+    $seen = @{}
+    $targets = @()
+    foreach ($t in $tokens) {
+        $low = $t.ToLowerInvariant()
+        $entry = $null
+        if ($byKey.ContainsKey($low)) {
+            $c = $byKey[$low]
+            $entry = [PSCustomObject]@{ Key = $c.Key; Name = $c.Name; WingetId = $c.WingetId; Source = $c.Source }
+        } elseif ($byId.ContainsKey($low)) {
+            $c = $byId[$low]
+            $entry = [PSCustomObject]@{ Key = $c.Key; Name = $c.Name; WingetId = $c.WingetId; Source = $c.Source }
+        } else {
+            if (-not (Test-SafeWingetId -Id $t)) {
+                throw ("Invalid or unsafe Winget package ID: '{0}'" -f $t)
+            }
+            $src = if ($t -cmatch '^9[A-Z0-9]{11}$') { 'msstore' } else { 'winget' }
+            $entry = [PSCustomObject]@{ Key = $low; Name = $t; WingetId = $t; Source = $src }
+        }
+
+        $dedupe = $entry.WingetId.ToLowerInvariant()
+        if (-not $seen.ContainsKey($dedupe)) {
+            $seen[$dedupe] = $true
+            $targets += $entry
+        }
+    }
+
+    return @($targets)
+}
+
+function Get-WingetInfo {
+    $path = ''
+    try {
+        $cmd = Get-Command -Name 'winget.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($cmd) { $path = $cmd.Source }
+    } catch {}
+
+    if ([string]::IsNullOrWhiteSpace($path) -and $env:LOCALAPPDATA) {
+        $cand = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\winget.exe'
+        if (Test-Path -LiteralPath $cand) { $path = $cand }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($path) -and $env:ProgramFiles) {
+        try {
+            $found = Get-ChildItem -Path (Join-Path $env:ProgramFiles 'WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe') -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $path = $found.FullName }
+        } catch {}
+    }
+
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        return [PSCustomObject]@{ Available = $false; Path = ''; Version = '' }
+    }
+
+    $ver = ''
+    try {
+        $vOut = & $path --version 2>$null
+        if ($vOut) { $ver = ($vOut | Select-Object -First 1).ToString().Trim() }
+    } catch {}
+
+    return [PSCustomObject]@{
+        Available = (-not [string]::IsNullOrWhiteSpace($ver))
+        Path      = $path
+        Version   = $ver
+    }
+}
+
+function Ensure-WingetReady {
+    param([switch]$AutoBootstrap)
+
+    $info = Get-WingetInfo
+    if ($info.Available -or -not $AutoBootstrap) { return $info }
+
+    $tmpBundle = Join-Path $env:TEMP ("Microsoft.DesktopAppInstaller_{0}.msixbundle" -f $PID)
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.ServicePointManager]::SecurityProtocol
+        $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/microsoft/winget-cli/releases/latest' -Headers @{ 'User-Agent' = 'LaptopInspect' } -TimeoutSec 15 -ErrorAction Stop
+        $asset = $rel.assets | Where-Object { $_.name -match '\.msixbundle$' } | Select-Object -First 1
+        if ($asset -and $asset.browser_download_url) {
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tmpBundle -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+            Add-AppxPackage -Path $tmpBundle -ErrorAction Stop
+        }
+    } catch {
+        # Best-effort silent bootstrap
+    } finally {
+        if (Test-Path -LiteralPath $tmpBundle) {
+            Remove-Item -LiteralPath $tmpBundle -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    return (Get-WingetInfo)
+}
+
+function Build-WingetInstallArgs {
+    param(
+        [Parameter(Mandatory = $true)][string]$WingetId,
+        [string]$Source = 'winget'
+    )
+    if ([string]::IsNullOrWhiteSpace($Source)) { $Source = 'winget' }
+    return @(
+        'install',
+        '--id', $WingetId,
+        '--exact',
+        '--source', $Source,
+        '--silent',
+        '--accept-package-agreements',
+        '--accept-source-agreements',
+        '--disable-interactivity'
+    )
+}
+
+function Build-WingetUpgradeAllArgs {
+    return @(
+        'upgrade',
+        '--all',
+        '--silent',
+        '--accept-package-agreements',
+        '--accept-source-agreements',
+        '--disable-interactivity'
+    )
+}
+
+function ConvertTo-WingetInstallResult {
+    param(
+        [int]$ExitCode,
+        [string[]]$OutputLines = @()
+    )
+
+    $cleanLines = @()
+    foreach ($line in $OutputLines) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $t = $line.Trim()
+        if ($t -match '^[\-\|\\/\.\s]+$' -or $t -match '^\d+\s*(KB|MB|GB)\s*/') { continue }
+        $cleanLines += $t
+    }
+    $detail = if ($cleanLines.Count -gt 0) { $cleanLines[$cleanLines.Count - 1] } else { '' }
+    if ($detail.Length -gt 160) { $detail = $detail.Substring(0, 160) }
+
+    if ($ExitCode -eq 0) {
+        return [PSCustomObject]@{ Success = $true; Status = 'Installed'; Detail = $detail; ExitCode = $ExitCode }
+    } elseif ($ExitCode -eq -1978335189 -or $ExitCode -eq -1978335135) {
+        return [PSCustomObject]@{ Success = $true; Status = 'Already Installed'; Detail = 'Latest version already installed'; ExitCode = $ExitCode }
+    } elseif ($ExitCode -eq 3010 -or $ExitCode -eq -1978335226) {
+        return [PSCustomObject]@{ Success = $true; Status = 'Installed (Reboot Needed)'; Detail = $detail; ExitCode = $ExitCode }
+    } else {
+        return [PSCustomObject]@{ Success = $false; Status = ("Failed (Exit {0})" -f $ExitCode); Detail = $detail; ExitCode = $ExitCode }
+    }
+}
+
+function Invoke-SilentAppInstallBatch {
+    param(
+        [array]$Targets = @(),
+        [switch]$UpgradeAll,
+        [switch]$DryRun,
+        [hashtable]$ProgressState = $null,
+        [switch]$ConsoleOutput
+    )
+
+    $addLog = {
+        param([string]$Msg)
+        $line = ("[{0}] {1}" -f (Get-Date).ToString('HH:mm:ss'), $Msg)
+        if ($ProgressState) { [void]$ProgressState.Logs.Add($line) }
+        if ($ConsoleOutput) { Write-Host ("    {0}" -f $line) -ForegroundColor Gray }
+    }
+
+    $winget = if ($DryRun) {
+        $wi = Get-WingetInfo
+        if (-not $wi.Available) { [PSCustomObject]@{ Available = $true; Path = 'winget.exe'; Version = 'DryRun' } } else { $wi }
+    } else {
+        Ensure-WingetReady -AutoBootstrap
+    }
+
+    if ($ProgressState) {
+        $ProgressState.Winget = $winget
+        $ProgressState.Running = $true
+        $ProgressState.State = 'Running'
+    }
+
+    $jobs = @()
+    foreach ($t in $Targets) {
+        $jobs += [PSCustomObject]@{
+            Name     = $t.Name
+            WingetId = $t.WingetId
+            Args     = (Build-WingetInstallArgs -WingetId $t.WingetId -Source $t.Source)
+        }
+    }
+    if ($UpgradeAll) {
+        $jobs += [PSCustomObject]@{
+            Name     = 'Upgrade All Installed Apps'
+            WingetId = '--all'
+            Args     = (Build-WingetUpgradeAllArgs)
+        }
+    }
+
+    if ($ProgressState) {
+        $ProgressState.Total = $jobs.Count
+        $ProgressState.CurrentIndex = 0
+    }
+
+    $results = @()
+    if (-not $winget.Available -and -not $DryRun) {
+        & $addLog 'ERROR: winget.exe is unavailable and auto-bootstrap failed.'
+        foreach ($j in $jobs) {
+            $r = [PSCustomObject]@{
+                Name     = $j.Name
+                WingetId = $j.WingetId
+                Status   = 'Failed (Winget Unavailable)'
+                Success  = $false
+                Detail   = 'Install App Installer from Microsoft Store or check network'
+                ExitCode = -1
+            }
+            $results += $r
+            if ($ProgressState) { [void]$ProgressState.Results.Add($r) }
+        }
+        if ($ProgressState) {
+            $ProgressState.Running = $false
+            $ProgressState.State = 'Failed'
+            $ProgressState.CurrentApp = ''
+        }
+        return @($results)
+    }
+
+    $idx = 0
+    $canceled = $false
+    foreach ($j in $jobs) {
+        if ($ProgressState -and $ProgressState.CancelRequested) {
+            $canceled = $true
+            & $addLog 'Install queue canceled by user.'
+            break
+        }
+        $idx++
+        if ($ProgressState) {
+            $ProgressState.CurrentIndex = $idx
+            $ProgressState.CurrentApp = $j.Name
+        }
+
+        $argLine = ($j.Args -join ' ')
+        if ($DryRun) {
+            & $addLog ("[{0}/{1}] DRY RUN: {2} {3}" -f $idx, $jobs.Count, $winget.Path, $argLine)
+            $r = [PSCustomObject]@{
+                Name     = $j.Name
+                WingetId = $j.WingetId
+                Status   = 'DryRun OK'
+                Success  = $true
+                Detail   = ("{0} {1}" -f $winget.Path, $argLine)
+                ExitCode = 0
+            }
+        } else {
+            & $addLog ("[{0}/{1}] Installing silently: {2} ({3})..." -f $idx, $jobs.Count, $j.Name, $j.WingetId)
+            $outLines = @()
+            $exitCode = -1
+            try {
+                $argArray = $j.Args
+                $rawOut = & $winget.Path @argArray 2>&1
+                $exitCode = $LASTEXITCODE
+                $outLines = @($rawOut | ForEach-Object { [string]$_ })
+            } catch {
+                $outLines = @($_.Exception.Message)
+                $exitCode = -1
+            }
+            $parsed = ConvertTo-WingetInstallResult -ExitCode $exitCode -OutputLines $outLines
+            & $addLog ("    -> {0}: {1}" -f $j.Name, $parsed.Status)
+            $r = [PSCustomObject]@{
+                Name     = $j.Name
+                WingetId = $j.WingetId
+                Status   = $parsed.Status
+                Success  = $parsed.Success
+                Detail   = $parsed.Detail
+                ExitCode = $parsed.ExitCode
+            }
+        }
+        $results += $r
+        if ($ProgressState) { [void]$ProgressState.Results.Add($r) }
+    }
+
+    if ($ProgressState) {
+        $ProgressState.Running = $false
+        $ProgressState.CurrentApp = ''
+        $ProgressState.State = if ($canceled) { 'Canceled' } else { 'Completed' }
+    }
+
+    return @($results)
+}
+# --- END 65-installer.ps1 ---
+
 # --- BEGIN 70-scoring.ps1 ---
 function Get-BuyerVerdict {
     param(
@@ -4154,11 +4852,25 @@ function Start-ReportHttpServer {
     $listener.Start()
 
     $currentManualJson = '{}'
+    $installState = [hashtable]::Synchronized(@{
+        Running         = $false
+        State           = 'Idle'
+        CurrentIndex    = 0
+        Total           = 0
+        CurrentApp      = ''
+        CancelRequested = $false
+        Winget          = (Get-WingetInfo)
+        Results         = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+        Logs            = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+    })
+    $installBg = $null
+    $installAsync = $null
+    $installRunspace = $null
 
     try {
         if (-not $NoLaunchBrowser) {
             Write-Host ("[+] Interactive Report Server running at {0}" -f $prefix) -ForegroundColor Green
-            Write-Host "    Complete interactive tests in your browser, click 'Save Completed Report', or press [Q] here to stop server." -ForegroundColor Gray
+            Write-Host "    Complete interactive tests or silent app installs in browser, or press [Q] here to stop server." -ForegroundColor Gray
             try { Start-Process $prefix | Out-Null } catch {}
         }
 
@@ -4169,6 +4881,14 @@ function Start-ReportHttpServer {
         while ($running) {
             if ($MaxSeconds -gt 0 -and $sw.Elapsed.TotalSeconds -ge $MaxSeconds) {
                 break
+            }
+            if ($installBg -and $installAsync -and $installAsync.IsCompleted) {
+                try { $installBg.EndInvoke($installAsync) | Out-Null } catch {}
+                try { $installBg.Dispose() } catch {}
+                try { $installRunspace.Close(); $installRunspace.Dispose() } catch {}
+                $installBg = $null
+                $installAsync = $null
+                $installRunspace = $null
             }
             try {
                 if (-not [Console]::IsInputRedirected -and [Console]::KeyAvailable) {
@@ -4198,6 +4918,81 @@ function Start-ReportHttpServer {
                 } elseif ($method -eq 'GET' -and $path -eq '/api/ports') {
                     $snap = Get-ConnectedPortsSnapshot | ConvertTo-Json -Depth 6 -Compress
                     Send-HttpResponse -Context $ctx -StatusCode 200 -ContentType 'application/json; charset=utf-8' -Body $snap
+                } elseif ($method -eq 'GET' -and $path -eq '/api/install/status') {
+                    $snapObj = [PSCustomObject]@{
+                        Running      = [bool]$installState.Running
+                        State        = [string]$installState.State
+                        CurrentIndex = [int]$installState.CurrentIndex
+                        Total        = [int]$installState.Total
+                        CurrentApp   = [string]$installState.CurrentApp
+                        Winget       = $installState.Winget
+                        Results      = @($installState.Results.ToArray())
+                        Logs         = @($installState.Logs.ToArray())
+                    } | ConvertTo-Json -Depth 6 -Compress
+                    Send-HttpResponse -Context $ctx -StatusCode 200 -ContentType 'application/json; charset=utf-8' -Body $snapObj
+                } elseif ($method -eq 'POST' -and $path -eq '/api/install') {
+                    if ($installState.Running) {
+                        Send-HttpResponse -Context $ctx -StatusCode 409 -ContentType 'application/json; charset=utf-8' -Body '{"ok":false,"error":"An installation queue is already running."}'
+                        continue
+                    }
+                    $sr = New-Object System.IO.StreamReader($req.InputStream, [System.Text.Encoding]::UTF8)
+                    $body = $sr.ReadToEnd()
+                    $sr.Dispose()
+                    $reqObj = $null
+                    try { $reqObj = $body | ConvertFrom-Json } catch {}
+                    if ($null -eq $reqObj) {
+                        Send-HttpResponse -Context $ctx -StatusCode 400 -ContentType 'application/json; charset=utf-8' -Body '{"ok":false,"error":"Invalid JSON payload"}'
+                        continue
+                    }
+
+                    $reqIds = @()
+                    if ($reqObj.ids) { $reqIds = @($reqObj.ids | ForEach-Object { [string]$_ }) }
+                    $reqPreset = if ($reqObj.preset) { [string]$reqObj.preset } else { '' }
+                    $reqUpgrade = [bool]$reqObj.upgradeAll
+                    $reqDryRun = [bool]$reqObj.dryRun
+
+                    try {
+                        $targets = @(Resolve-InstallTargets -KeysOrIds $reqIds -Preset $reqPreset)
+                    } catch {
+                        $badMsg = (@{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress)
+                        Send-HttpResponse -Context $ctx -StatusCode 400 -ContentType 'application/json; charset=utf-8' -Body $badMsg
+                        continue
+                    }
+
+                    if ($targets.Count -eq 0 -and -not $reqUpgrade) {
+                        Send-HttpResponse -Context $ctx -StatusCode 400 -ContentType 'application/json; charset=utf-8' -Body '{"ok":false,"error":"No packages or upgrade option selected."}'
+                        continue
+                    }
+
+                    $installState.Results.Clear()
+                    $installState.Logs.Clear()
+                    $installState.CancelRequested = $false
+                    $installState.Running = $true
+                    $installState.State = 'Running'
+                    $installState.CurrentIndex = 0
+                    $installState.Total = $targets.Count + $(if ($reqUpgrade) { 1 } else { 0 })
+                    $installState.CurrentApp = ''
+
+                    $iss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+                    foreach ($fnName in @('Get-AppCatalog','Get-AppPresets','Test-SafeWingetId','Resolve-InstallTargets','Get-WingetInfo','Ensure-WingetReady','Build-WingetInstallArgs','Build-WingetUpgradeAllArgs','ConvertTo-WingetInstallResult','Invoke-SilentAppInstallBatch')) {
+                        $fnDef = (Get-Command -Name $fnName -ErrorAction Stop).Definition
+                        $iss.Commands.Add((New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($fnName, $fnDef)))
+                    }
+                    $installRunspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace($iss)
+                    $installRunspace.Open()
+                    $installBg = [PowerShell]::Create()
+                    $installBg.Runspace = $installRunspace
+                    [void]$installBg.AddScript({
+                        param($TgtList, $DoUpgrade, $DoDry, $SharedState)
+                        Invoke-SilentAppInstallBatch -Targets $TgtList -UpgradeAll:$DoUpgrade -DryRun:$DoDry -ProgressState $SharedState | Out-Null
+                    }).AddArgument($targets).AddArgument($reqUpgrade).AddArgument($reqDryRun).AddArgument($installState)
+                    $installAsync = $installBg.BeginInvoke()
+
+                    $ack = (@{ ok = $true; total = $installState.Total } | ConvertTo-Json -Compress)
+                    Send-HttpResponse -Context $ctx -StatusCode 202 -ContentType 'application/json; charset=utf-8' -Body $ack
+                } elseif ($method -eq 'POST' -and $path -eq '/api/install/cancel') {
+                    $installState.CancelRequested = $true
+                    Send-HttpResponse -Context $ctx -StatusCode 200 -ContentType 'application/json; charset=utf-8' -Body '{"ok":true}'
                 } elseif ($method -eq 'POST' -and $path -eq '/api/save') {
                     $sr = New-Object System.IO.StreamReader($req.InputStream, [System.Text.Encoding]::UTF8)
                     $body = $sr.ReadToEnd()
@@ -4236,6 +5031,14 @@ function Start-ReportHttpServer {
             }
         }
     } finally {
+        if ($installBg) {
+            $installState.CancelRequested = $true
+            try { $installBg.Stop() } catch {}
+            try { $installBg.Dispose() } catch {}
+        }
+        if ($installRunspace) {
+            try { $installRunspace.Close(); $installRunspace.Dispose() } catch {}
+        }
         try { if ($listener.IsListening) { $listener.Stop() } } catch {}
         try { $listener.Close() } catch {}
     }
@@ -4317,9 +5120,31 @@ function Invoke-LaptopInspect {
             -NoBrowserFlag:$NoBrowser `
             -NoServerFlag:$NoServer `
             -JsonOnlyFlag:$JsonOnly `
-            -TargetOutDir $targetOutDir
+            -TargetOutDir $targetOutDir `
+            -PresetFlag $InstallPreset `
+            -AppsFlag $InstallApps `
+            -UpgradeAllFlag:$UpgradeAll `
+            -InstallOnlyFlag:$InstallOnly `
+            -DryRunFlag:$DryRun
         if ($elevatedStarted) {
             Write-Host "Elevated session started in new window. Exiting non-admin parent." -ForegroundColor Green
+            return
+        }
+
+        if ($InstallOnly) {
+            Write-Host ""
+            Write-Host ("=== {0} v{1} - Silent App Installer ===" -f $script:ToolName, $script:ToolVersion) -ForegroundColor Cyan
+            $targets = @(Resolve-InstallTargets -KeysOrIds $InstallApps -Preset $InstallPreset)
+            if ($targets.Count -eq 0 -and -not $UpgradeAll) {
+                throw "No apps specified. Pass -InstallPreset <essentials|office|tech|dev>, -InstallApps <keys/ids>, or -UpgradeAll."
+            }
+            $resList = @(Invoke-SilentAppInstallBatch -Targets $targets -UpgradeAll:$UpgradeAll -DryRun:$DryRun -ConsoleOutput)
+            Write-Host ""
+            Write-Host "=== Silent Install Summary ===" -ForegroundColor Cyan
+            foreach ($ri in $resList) {
+                $col = if ($ri.Success) { 'Green' } else { 'Red' }
+                Write-Host ("  [{0}] {1} ({2}) -> {3}" -f $(if ($ri.Success) { 'OK' } else { 'FAIL' }), $ri.Name, $ri.WingetId, $ri.Status) -ForegroundColor $col
+            }
             return
         }
 
@@ -4376,10 +5201,29 @@ function Invoke-LaptopInspect {
             Battery       = $batInfo
             Peripherals   = $periphInfo
             InitialPorts  = $portSnap
+            Installer     = [PSCustomObject]@{
+                Winget  = (Get-WingetInfo)
+                Catalog = @(Get-AppCatalog)
+                Presets = @(Get-AppPresets)
+            }
             Scoring       = $null
         }
 
         $reportObj.Scoring = Get-BuyerVerdict -ReportData $reportObj
+
+        $cliTargets = @()
+        if (-not [string]::IsNullOrWhiteSpace($InstallPreset) -or ($InstallApps -and $InstallApps.Count -gt 0)) {
+            $cliTargets = @(Resolve-InstallTargets -KeysOrIds $InstallApps -Preset $InstallPreset)
+        }
+        if ($cliTargets.Count -gt 0 -or $UpgradeAll) {
+            Write-Host ""
+            Write-Host "=== Running Silent App Installer Queue ===" -ForegroundColor Cyan
+            $cliInstResults = @(Invoke-SilentAppInstallBatch -Targets $cliTargets -UpgradeAll:$UpgradeAll -DryRun:$DryRun -ConsoleOutput)
+            foreach ($ri in $cliInstResults) {
+                $col = if ($ri.Success) { 'Green' } else { 'Red' }
+                Write-Host ("  [{0}] {1} -> {2}" -f $(if ($ri.Success) { 'OK' } else { 'FAIL' }), $ri.Name, $ri.Status) -ForegroundColor $col
+            }
+        }
 
         $safeModel = ($sysInfo.Model -replace '[^A-Za-z0-9\-_]+', '_').Trim('_')
         if ([string]::IsNullOrWhiteSpace($safeModel)) { $safeModel = 'Laptop' }

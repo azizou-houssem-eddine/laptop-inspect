@@ -25,9 +25,12 @@ irm https://raw.githubusercontent.com/azizou-houssem-eddine/laptop-inspect/main/
 ```powershell
 # Fast 6-second hardware + corporate lock audit without opening browser or stress tests:
 $env:LI_QUICK='1'; $env:LI_NO_BROWSER='1'; irm https://github.com/azizou-houssem-eddine/laptop-inspect/releases/latest/download/inspect.ps1 | iex
+
+# Silent zero-prompt software installer only (Resale Essentials preset):
+$env:LI_INSTALL='essentials'; $env:LI_INSTALL_ONLY='1'; irm https://github.com/azizou-houssem-eddine/laptop-inspect/releases/latest/download/inspect.ps1 | iex
 ```
 
-Supported environment overrides: `LI_QUICK=1`, `LI_SKIP_STRESS=1`, `LI_STRESS_SECONDS=10`, `LI_NO_ELEVATE=1`, `LI_NO_BROWSER=1`, `LI_NO_SERVER=1`, `LI_JSON_ONLY=1`, `LI_OUTDIR="C:\Reports"`.
+Supported environment overrides: `LI_QUICK=1`, `LI_SKIP_STRESS=1`, `LI_STRESS_SECONDS=10`, `LI_NO_ELEVATE=1`, `LI_NO_BROWSER=1`, `LI_NO_SERVER=1`, `LI_JSON_ONLY=1`, `LI_OUTDIR="C:\Reports"`, `LI_INSTALL=<preset|comma-list>`, `LI_INSTALL_ONLY=1`, `LI_UPGRADE_ALL=1`, `LI_DRY_RUN=1`.
 
 ### Offline USB Usage
 
@@ -70,6 +73,12 @@ Because browsers restrict camera/microphone access on `file://`, LaptopInspect s
 9. **BIOS / UEFI Manual Lock Checklist:** Prompts manual boot-menu check when vendor BIOS WMI is unavailable.
 10. **Cosmetic Grade & Purchase Certificate:** Chassis/screen/hinge/charger grades, seller/price notes, Save to Desktop HTML, Copy Text/WhatsApp Summary, Export `.TXT`/`.JSON`, and Print/PDF certificate.
 
+### 4. Silent Automatic Software Installer (Ninite / Chris Titus Tech Style — Zero Prompts)
+Available both inside **Section 4** of the browser UI and standalone via CLI/`irm | iex`:
+- **Zero Prompts:** Every package installs automatically with `--silent --accept-package-agreements --accept-source-agreements --disable-interactivity` (no "Next" or "Accept Agreement" popups) and automatically bootstraps Winget if missing on fresh Windows installs.
+- **39 Verified Packages (7 Categories):** Browsers (Chrome, Firefox, Brave), Essentials/Office (7-Zip, WinRAR, Acrobat, SumatraPDF, LibreOffice, Notepad++), Media (VLC, K-Lite, Spotify), Runtimes (VC++ x64/x86, .NET 8, DirectX, Java), Hardware Bench (HWiNFO, CrystalDiskInfo/Mark, CPU-Z, GPU-Z, OCCT, BleachBit), Communication/Remote (WhatsApp, Zoom, Discord, Telegram, AnyDesk, TeamViewer), Utilities/Dev (Everything, ShareX, Greenshot, PowerToys, qBittorrent, VS Code, Git, Python 3.12, Steam).
+- **1-Click Presets:** `essentials` (*Resale Essentials*), `office` (*Office & Student*), `tech` (*Technician Bench*), `dev` (*Developer Pack*), plus custom Winget IDs and `Upgrade All Existing Apps`.
+
 ---
 
 ## CLI Parameters
@@ -84,6 +93,11 @@ Because browsers restrict camera/microphone access on `file://`, LaptopInspect s
 | `-NoElevate` | Runs immediately in current privilege level without UAC prompt |
 | `-JsonOnly` | Writes raw JSON report only |
 | `-OutDir <path>` | Custom output directory (defaults to Desktop) |
+| `-InstallPreset <name>` | Installs a preset silently (`essentials`, `office`, `tech`, `dev`) |
+| `-InstallApps <list>` | Comma-separated short keys (`chrome,vlc,7zip`) or Winget IDs |
+| `-UpgradeAll` | Runs silent `winget upgrade --all` with auto-accepted agreements |
+| `-InstallOnly` | Skips hardware diagnostics and runs the silent installer queue only |
+| `-DryRun` | Logs exact silent Winget commands without modifying the system |
 
 ---
 
