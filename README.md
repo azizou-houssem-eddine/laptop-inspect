@@ -36,11 +36,17 @@ $env:LI_QUICK='1'; $env:LI_NO_BROWSER='1'; irm https://is.gd/lapcheck | iex
 $env:LI_INSTALL='essentials'; $env:LI_INSTALL_ONLY='1'; irm https://is.gd/lapcheck | iex
 ```
 
-Supported environment overrides: `LI_QUICK=1`, `LI_SKIP_STRESS=1`, `LI_STRESS_SECONDS=10`, `LI_NO_ELEVATE=1`, `LI_NO_BROWSER=1`, `LI_NO_SERVER=1`, `LI_JSON_ONLY=1`, `LI_OUTDIR="C:\Reports"`, `LI_INSTALL=<preset|comma-list>`, `LI_INSTALL_ONLY=1`, `LI_UPGRADE_ALL=1`, `LI_DRY_RUN=1`.
+Supported environment overrides: `LI_QUICK=1`, `LI_SKIP_STRESS=1`, `LI_STRESS_SECONDS=10`, `LI_NO_ELEVATE=1`, `LI_NO_BROWSER=1`, `LI_NO_SERVER=1`, `LI_JSON_ONLY=1`, `LI_OUTDIR="C:\Reports"`, `LI_INSTALL=<preset|comma-list>`, `LI_INSTALL_ONLY=1`, `LI_UPGRADE_ALL=1`, `LI_DRY_RUN=1`, `LI_MENU=1`, `LI_NO_MENU=1`.
+
+### Interactive Terminal UI (TUI)
+Running `irm is.gd/lapcheck | iex` in an interactive PowerShell window launches a clean arrow-key menu (`Up`/`Down` + `Enter` or hotkeys `1-6`, `E`, `0`) with:
+- **Live 9-Step Progress Table:** Replaces noisy logs with `[ PASS ]` / `[ WARN ]` / `[ FAIL ]` / `[ N/A  ]` status tags and per-step timing.
+- **Boxed Executive Buyer Scorecard:** Displays an ASCII health gauge, 8-point Corporate Lock matrix, and hardware summary right inside the console.
+- **Interactive App Picker (`[4]`):** Browse and toggle any of the 39 apps with `Spacebar` + `Enter` to install silently with zero prompts.
 
 ### Offline USB Usage
 
-1. Download `LaptopInspect-v1.1.0.zip` from [Releases](https://github.com/azizou-houssem-eddine/laptop-inspect/releases).
+1. Download `LaptopInspect-v1.2.0.zip` from [Releases](https://github.com/azizou-houssem-eddine/laptop-inspect/releases).
 2. Extract to a USB flash drive.
 3. Double-click `RUN.bat` (auto-requests Admin elevation) or run `.\inspect.ps1` in PowerShell.
 
@@ -104,6 +110,7 @@ Available both inside **Section 4** of the browser UI and standalone via CLI/`ir
 | `-UpgradeAll` | Runs silent `winget upgrade --all` with auto-accepted agreements |
 | `-InstallOnly` | Skips hardware diagnostics and runs the silent installer queue only |
 | `-DryRun` | Logs exact silent Winget commands without modifying the system |
+| `-Menu` / `-NoMenu` | Force-enable or skip the interactive TUI launcher menu |
 
 ---
 

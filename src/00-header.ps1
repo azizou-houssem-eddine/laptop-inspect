@@ -22,13 +22,15 @@ param(
     [switch]$UpgradeAll,
     [switch]$InstallOnly,
     [switch]$DryRun,
+    [switch]$Menu,
+    [switch]$NoMenu,
     [string]$CleanupTempPath = ''
 )
 
 $ErrorActionPreference = 'Continue'
 $script:SelfSource = $MyInvocation.MyCommand.Definition
 $script:ToolName = 'LaptopInspect'
-$script:ToolVersion = '1.1.0'
+$script:ToolVersion = '1.2.0'
 $script:RepoUrl = 'https://github.com/azizou-houssem-eddine/laptop-inspect'
 $script:ScriptStartTime = Get-Date
 
@@ -42,6 +44,8 @@ if ($env:LI_JSON_ONLY -eq '1') { $JsonOnly = $true }
 if ($env:LI_INSTALL_ONLY -eq '1') { $InstallOnly = $true }
 if ($env:LI_UPGRADE_ALL -eq '1') { $UpgradeAll = $true }
 if ($env:LI_DRY_RUN -eq '1') { $DryRun = $true }
+if ($env:LI_MENU -eq '1') { $Menu = $true }
+if ($env:LI_NO_MENU -eq '1') { $NoMenu = $true }
 if (-not [string]::IsNullOrWhiteSpace($env:LI_INSTALL)) {
     $rawInst = $env:LI_INSTALL.Trim()
     if ($rawInst -match '^(essentials|office|tech|dev)$' -and [string]::IsNullOrWhiteSpace($InstallPreset)) {
@@ -167,10 +171,12 @@ function Request-OptionalElevation {
         [string[]]$AppsFlag = @(),
         [switch]$UpgradeAllFlag,
         [switch]$InstallOnlyFlag,
-        [switch]$DryRunFlag
+        [switch]$DryRunFlag,
+        [switch]$MenuFlag,
+        [switch]$ForceElevate
     )
     if (Test-IsAdmin) { return $false }
-    if ($NoElevate) { return $false }
+    if ($NoElevate -and -not $ForceElevate) { return $false }
     if ($env:LAPTOP_INSPECT_IMPORT_ONLY -eq '1') { return $false }
     try {
         if (-not [Environment]::UserInteractive) { return $false }
@@ -179,13 +185,15 @@ function Request-OptionalElevation {
         return $false
     }
 
-    Write-Host ""
-    Write-Host "[!] Standard (non-Admin) session detected." -ForegroundColor Yellow
-    Write-Host "    Admin privileges unlock Vendor BIOS WMI, BitLocker status, MDM CIM, and Storage SMART wear." -ForegroundColor Gray
-    $ans = Read-Host "    Elevate to Administrator now? [Y/n] (default Y)"
-    if (-not [string]::IsNullOrWhiteSpace($ans) -and $ans.Trim().ToLower().StartsWith('n')) {
-        Write-Host "    Continuing in Standard mode..." -ForegroundColor Gray
-        return $false
+    if (-not $ForceElevate) {
+        Write-Host ""
+        Write-Host "[!] Standard (non-Admin) session detected." -ForegroundColor Yellow
+        Write-Host "    Admin privileges unlock Vendor BIOS WMI, BitLocker status, MDM CIM, and Storage SMART wear." -ForegroundColor Gray
+        $ans = Read-Host "    Elevate to Administrator now? [Y/n] (default Y)"
+        if (-not [string]::IsNullOrWhiteSpace($ans) -and $ans.Trim().ToLower().StartsWith('n')) {
+            Write-Host "    Continuing in Standard mode..." -ForegroundColor Gray
+            return $false
+        }
     }
 
     $tempPath = ''
@@ -215,6 +223,7 @@ function Request-OptionalElevation {
     if ($UpgradeAllFlag) { $argParts += '-UpgradeAll' }
     if ($InstallOnlyFlag) { $argParts += '-InstallOnly' }
     if ($DryRunFlag) { $argParts += '-DryRun' }
+    if ($MenuFlag) { $argParts += '-Menu' }
     if (-not [string]::IsNullOrWhiteSpace($TargetOutDir)) { $argParts += ('-OutDir "{0}"' -f $TargetOutDir) }
     if (-not [string]::IsNullOrWhiteSpace($tempPath)) { $argParts += ('-CleanupTempPath "{0}"' -f $tempPath) }
 

@@ -1,3 +1,21 @@
+function Test-IsCorporateMdmEnrollment {
+    param(
+        [string]$ProviderID = '',
+        [string]$DiscoveryUrl = '',
+        [string]$UPN = '',
+        [string]$AADTenantID = '',
+        $EnrollmentType = $null
+    )
+    $builtInProviders = @('Local Authority', 'Deploy Authority', 'Cloud Authority', 'WMI_Bridge_SCCM_Server')
+    $hasRemoteEndpoint = (-not [string]::IsNullOrWhiteSpace($DiscoveryUrl)) -or (-not [string]::IsNullOrWhiteSpace($AADTenantID)) -or (-not [string]::IsNullOrWhiteSpace($UPN))
+    if ($hasRemoteEndpoint) { return $true }
+    $pTrim = ([string]$ProviderID).Trim()
+    if ([string]::IsNullOrWhiteSpace($pTrim)) { return $false }
+    if ($builtInProviders -contains $pTrim) { return $false }
+    if ($null -ne $EnrollmentType -and ([int]$EnrollmentType -in @(12, 28, 30, 31))) { return $false }
+    return $true
+}
+
 function Parse-DsregcmdOutput {
     param(
         [string[]]$Lines
@@ -138,38 +156,39 @@ function Get-CorporateLockAudit {
 
     # 3. Intune / MDM Enrollment
     $mdmEntries = @()
-    $builtInAuthorities = @('Local Authority', 'Deploy Authority', 'Cloud Authority')
     $enrollBase = 'HKLM:\SOFTWARE\Microsoft\Enrollments'
     if (Test-Path -LiteralPath $enrollBase) {
         $subKeys = Get-ChildItem -LiteralPath $enrollBase -ErrorAction SilentlyContinue
         foreach ($sk in $subKeys) {
             $p = $sk.PSPath
-            $prov = [string](Get-SafeRegValue -Path $p -Name 'ProviderID' -Default '')
-            $disc = [string](Get-SafeRegValue -Path $p -Name 'DiscoveryServiceFullURL' -Default '')
-            $upn  = [string](Get-SafeRegValue -Path $p -Name 'UPN' -Default '')
-            $aad  = [string](Get-SafeRegValue -Path $p -Name 'AADTenantID' -Default '')
+            $prov  = [string](Get-SafeRegValue -Path $p -Name 'ProviderID' -Default '')
+            $disc  = [string](Get-SafeRegValue -Path $p -Name 'DiscoveryServiceFullURL' -Default '')
+            $upn   = [string](Get-SafeRegValue -Path $p -Name 'UPN' -Default '')
+            $aad   = [string](Get-SafeRegValue -Path $p -Name 'AADTenantID' -Default '')
+            $etype = Get-SafeRegValue -Path $p -Name 'EnrollmentType' -Default $null
             $state = Get-SafeRegValue -Path $p -Name 'EnrollmentState' -Default $null
 
-            $isBuiltInLocal = ($builtInAuthorities -contains $prov.Trim()) -and
-                [string]::IsNullOrWhiteSpace($disc) -and
-                [string]::IsNullOrWhiteSpace($upn) -and
-                [string]::IsNullOrWhiteSpace($aad)
-
-            if ($isBuiltInLocal) { continue }
-
-            if (-not [string]::IsNullOrWhiteSpace($prov) -or -not [string]::IsNullOrWhiteSpace($disc) -or -not [string]::IsNullOrWhiteSpace($aad) -or -not [string]::IsNullOrWhiteSpace($upn)) {
+            if (Test-IsCorporateMdmEnrollment -ProviderID $prov -DiscoveryUrl $disc -UPN $upn -AADTenantID $aad -EnrollmentType $etype) {
                 $mdmEntries += [PSCustomObject]@{
-                    EnrollmentId = $sk.PSChildName
-                    ProviderID   = $prov
-                    DiscoveryUrl = $disc
-                    UPN          = $upn
-                    AADTenantID  = $aad
-                    State        = $state
+                    EnrollmentId   = $sk.PSChildName
+                    ProviderID     = $prov
+                    DiscoveryUrl   = $disc
+                    UPN            = $upn
+                    AADTenantID    = $aad
+                    EnrollmentType = $etype
+                    State          = $state
                 }
             }
         }
     }
-    $cimMdm = if ($IsAdmin) { Invoke-SafeCim -Namespace 'root\cimv2\mdm\dmmap' -ClassName 'MDM_EnterpriseModernManagement_Enrollment01' } else { @() }
+    $cimMdm = @()
+    if ($IsAdmin) {
+        $rawCimMdm = @(Invoke-SafeCim -Namespace 'root\cimv2\mdm\dmmap' -ClassName 'MDM_EnterpriseModernManagement_Enrollment01')
+        $cimMdm = @($rawCimMdm | Where-Object {
+            (-not [string]::IsNullOrWhiteSpace([string]$_.EntDMID)) -or
+            (-not [string]::IsNullOrWhiteSpace([string]$_.UPN))
+        })
+    }
     $ppkgFiles = @()
     $provDir = Join-Path $env:ProgramData 'Microsoft\Provisioning'
     if (Test-Path -LiteralPath $provDir) {

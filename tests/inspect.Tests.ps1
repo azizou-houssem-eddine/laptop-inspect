@@ -341,6 +341,30 @@ try {
             }
         }
     }
+
+    Describe 'MDM Built-in False-Positive Guard (Test-IsCorporateMdmEnrollment)' {
+        It 'Ignores built-in Windows 11 local/bridge authorities with no remote endpoint' {
+            Test-IsCorporateMdmEnrollment -ProviderID 'WMI_Bridge_SCCM_Server' -EnrollmentType 12 | Should Be $false
+            Test-IsCorporateMdmEnrollment -ProviderID 'Local Authority' -EnrollmentType 28 | Should Be $false
+            Test-IsCorporateMdmEnrollment -ProviderID 'Deploy Authority' -EnrollmentType 30 | Should Be $false
+            Test-IsCorporateMdmEnrollment -ProviderID 'Cloud Authority' -EnrollmentType 31 | Should Be $false
+        }
+
+        It 'Flags genuine Intune / corporate MDM enrollments' {
+            Test-IsCorporateMdmEnrollment -ProviderID 'MS DM Server' -DiscoveryUrl 'https://enrollment.manage.microsoft.com/enrollmentserver/discovery.svc' -EnrollmentType 6 | Should Be $true
+            Test-IsCorporateMdmEnrollment -ProviderID 'WMI_Bridge_SCCM_Server' -AADTenantID '11111111-2222-3333-4444-555555555555' | Should Be $true
+            Test-IsCorporateMdmEnrollment -ProviderID 'WorkspaceONE' -EnrollmentType 6 | Should Be $true
+        }
+    }
+
+    Describe 'TUI Helpers (75-tui.ps1)' {
+        It 'Formats ASCII progress bars and padded lines cleanly' {
+            Format-TuiBar -Percent 50 -Width 10 | Should Be '[#####.....]'
+            Format-TuiBar -Percent 100 -Width 10 | Should Be '[##########]'
+            (Format-TuiPad -Text 'ABC' -Width 6) | Should Be 'ABC   '
+            (Format-TuiPad -Text 'ABCDEFGHIJ' -Width 7) | Should Be 'ABCD...'
+        }
+    }
 } finally {
     Remove-Item Env:\LAPTOP_INSPECT_IMPORT_ONLY -ErrorAction SilentlyContinue
 }

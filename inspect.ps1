@@ -23,13 +23,15 @@ param(
     [switch]$UpgradeAll,
     [switch]$InstallOnly,
     [switch]$DryRun,
+    [switch]$Menu,
+    [switch]$NoMenu,
     [string]$CleanupTempPath = ''
 )
 
 $ErrorActionPreference = 'Continue'
 $script:SelfSource = $MyInvocation.MyCommand.Definition
 $script:ToolName = 'LaptopInspect'
-$script:ToolVersion = '1.1.0'
+$script:ToolVersion = '1.2.0'
 $script:RepoUrl = 'https://github.com/azizou-houssem-eddine/laptop-inspect'
 $script:ScriptStartTime = Get-Date
 
@@ -43,6 +45,8 @@ if ($env:LI_JSON_ONLY -eq '1') { $JsonOnly = $true }
 if ($env:LI_INSTALL_ONLY -eq '1') { $InstallOnly = $true }
 if ($env:LI_UPGRADE_ALL -eq '1') { $UpgradeAll = $true }
 if ($env:LI_DRY_RUN -eq '1') { $DryRun = $true }
+if ($env:LI_MENU -eq '1') { $Menu = $true }
+if ($env:LI_NO_MENU -eq '1') { $NoMenu = $true }
 if (-not [string]::IsNullOrWhiteSpace($env:LI_INSTALL)) {
     $rawInst = $env:LI_INSTALL.Trim()
     if ($rawInst -match '^(essentials|office|tech|dev)$' -and [string]::IsNullOrWhiteSpace($InstallPreset)) {
@@ -168,10 +172,12 @@ function Request-OptionalElevation {
         [string[]]$AppsFlag = @(),
         [switch]$UpgradeAllFlag,
         [switch]$InstallOnlyFlag,
-        [switch]$DryRunFlag
+        [switch]$DryRunFlag,
+        [switch]$MenuFlag,
+        [switch]$ForceElevate
     )
     if (Test-IsAdmin) { return $false }
-    if ($NoElevate) { return $false }
+    if ($NoElevate -and -not $ForceElevate) { return $false }
     if ($env:LAPTOP_INSPECT_IMPORT_ONLY -eq '1') { return $false }
     try {
         if (-not [Environment]::UserInteractive) { return $false }
@@ -180,13 +186,15 @@ function Request-OptionalElevation {
         return $false
     }
 
-    Write-Host ""
-    Write-Host "[!] Standard (non-Admin) session detected." -ForegroundColor Yellow
-    Write-Host "    Admin privileges unlock Vendor BIOS WMI, BitLocker status, MDM CIM, and Storage SMART wear." -ForegroundColor Gray
-    $ans = Read-Host "    Elevate to Administrator now? [Y/n] (default Y)"
-    if (-not [string]::IsNullOrWhiteSpace($ans) -and $ans.Trim().ToLower().StartsWith('n')) {
-        Write-Host "    Continuing in Standard mode..." -ForegroundColor Gray
-        return $false
+    if (-not $ForceElevate) {
+        Write-Host ""
+        Write-Host "[!] Standard (non-Admin) session detected." -ForegroundColor Yellow
+        Write-Host "    Admin privileges unlock Vendor BIOS WMI, BitLocker status, MDM CIM, and Storage SMART wear." -ForegroundColor Gray
+        $ans = Read-Host "    Elevate to Administrator now? [Y/n] (default Y)"
+        if (-not [string]::IsNullOrWhiteSpace($ans) -and $ans.Trim().ToLower().StartsWith('n')) {
+            Write-Host "    Continuing in Standard mode..." -ForegroundColor Gray
+            return $false
+        }
     }
 
     $tempPath = ''
@@ -216,6 +224,7 @@ function Request-OptionalElevation {
     if ($UpgradeAllFlag) { $argParts += '-UpgradeAll' }
     if ($InstallOnlyFlag) { $argParts += '-InstallOnly' }
     if ($DryRunFlag) { $argParts += '-DryRun' }
+    if ($MenuFlag) { $argParts += '-Menu' }
     if (-not [string]::IsNullOrWhiteSpace($TargetOutDir)) { $argParts += ('-OutDir "{0}"' -f $TargetOutDir) }
     if (-not [string]::IsNullOrWhiteSpace($tempPath)) { $argParts += ('-CleanupTempPath "{0}"' -f $tempPath) }
 
@@ -2182,6 +2191,24 @@ input[type="text"], input[type="number"], select, textarea {
 # --- END EMBEDDED TEMPLATE ---
 
 # --- BEGIN 10-corporate-lock.ps1 ---
+function Test-IsCorporateMdmEnrollment {
+    param(
+        [string]$ProviderID = '',
+        [string]$DiscoveryUrl = '',
+        [string]$UPN = '',
+        [string]$AADTenantID = '',
+        $EnrollmentType = $null
+    )
+    $builtInProviders = @('Local Authority', 'Deploy Authority', 'Cloud Authority', 'WMI_Bridge_SCCM_Server')
+    $hasRemoteEndpoint = (-not [string]::IsNullOrWhiteSpace($DiscoveryUrl)) -or (-not [string]::IsNullOrWhiteSpace($AADTenantID)) -or (-not [string]::IsNullOrWhiteSpace($UPN))
+    if ($hasRemoteEndpoint) { return $true }
+    $pTrim = ([string]$ProviderID).Trim()
+    if ([string]::IsNullOrWhiteSpace($pTrim)) { return $false }
+    if ($builtInProviders -contains $pTrim) { return $false }
+    if ($null -ne $EnrollmentType -and ([int]$EnrollmentType -in @(12, 28, 30, 31))) { return $false }
+    return $true
+}
+
 function Parse-DsregcmdOutput {
     param(
         [string[]]$Lines
@@ -2322,38 +2349,39 @@ function Get-CorporateLockAudit {
 
     # 3. Intune / MDM Enrollment
     $mdmEntries = @()
-    $builtInAuthorities = @('Local Authority', 'Deploy Authority', 'Cloud Authority')
     $enrollBase = 'HKLM:\SOFTWARE\Microsoft\Enrollments'
     if (Test-Path -LiteralPath $enrollBase) {
         $subKeys = Get-ChildItem -LiteralPath $enrollBase -ErrorAction SilentlyContinue
         foreach ($sk in $subKeys) {
             $p = $sk.PSPath
-            $prov = [string](Get-SafeRegValue -Path $p -Name 'ProviderID' -Default '')
-            $disc = [string](Get-SafeRegValue -Path $p -Name 'DiscoveryServiceFullURL' -Default '')
-            $upn  = [string](Get-SafeRegValue -Path $p -Name 'UPN' -Default '')
-            $aad  = [string](Get-SafeRegValue -Path $p -Name 'AADTenantID' -Default '')
+            $prov  = [string](Get-SafeRegValue -Path $p -Name 'ProviderID' -Default '')
+            $disc  = [string](Get-SafeRegValue -Path $p -Name 'DiscoveryServiceFullURL' -Default '')
+            $upn   = [string](Get-SafeRegValue -Path $p -Name 'UPN' -Default '')
+            $aad   = [string](Get-SafeRegValue -Path $p -Name 'AADTenantID' -Default '')
+            $etype = Get-SafeRegValue -Path $p -Name 'EnrollmentType' -Default $null
             $state = Get-SafeRegValue -Path $p -Name 'EnrollmentState' -Default $null
 
-            $isBuiltInLocal = ($builtInAuthorities -contains $prov.Trim()) -and
-                [string]::IsNullOrWhiteSpace($disc) -and
-                [string]::IsNullOrWhiteSpace($upn) -and
-                [string]::IsNullOrWhiteSpace($aad)
-
-            if ($isBuiltInLocal) { continue }
-
-            if (-not [string]::IsNullOrWhiteSpace($prov) -or -not [string]::IsNullOrWhiteSpace($disc) -or -not [string]::IsNullOrWhiteSpace($aad) -or -not [string]::IsNullOrWhiteSpace($upn)) {
+            if (Test-IsCorporateMdmEnrollment -ProviderID $prov -DiscoveryUrl $disc -UPN $upn -AADTenantID $aad -EnrollmentType $etype) {
                 $mdmEntries += [PSCustomObject]@{
-                    EnrollmentId = $sk.PSChildName
-                    ProviderID   = $prov
-                    DiscoveryUrl = $disc
-                    UPN          = $upn
-                    AADTenantID  = $aad
-                    State        = $state
+                    EnrollmentId   = $sk.PSChildName
+                    ProviderID     = $prov
+                    DiscoveryUrl   = $disc
+                    UPN            = $upn
+                    AADTenantID    = $aad
+                    EnrollmentType = $etype
+                    State          = $state
                 }
             }
         }
     }
-    $cimMdm = if ($IsAdmin) { Invoke-SafeCim -Namespace 'root\cimv2\mdm\dmmap' -ClassName 'MDM_EnterpriseModernManagement_Enrollment01' } else { @() }
+    $cimMdm = @()
+    if ($IsAdmin) {
+        $rawCimMdm = @(Invoke-SafeCim -Namespace 'root\cimv2\mdm\dmmap' -ClassName 'MDM_EnterpriseModernManagement_Enrollment01')
+        $cimMdm = @($rawCimMdm | Where-Object {
+            (-not [string]::IsNullOrWhiteSpace([string]$_.EntDMID)) -or
+            (-not [string]::IsNullOrWhiteSpace([string]$_.UPN))
+        })
+    }
     $ppkgFiles = @()
     $provDir = Join-Path $env:ProgramData 'Microsoft\Provisioning'
     if (Test-Path -LiteralPath $provDir) {
@@ -4760,6 +4788,515 @@ function Get-BuyerVerdict {
 }
 # --- END 70-scoring.ps1 ---
 
+# --- BEGIN 75-tui.ps1 ---
+function Test-InteractiveConsole {
+    if ($env:LAPTOP_INSPECT_IMPORT_ONLY -eq '1') { return $false }
+    try {
+        if (-not [Environment]::UserInteractive) { return $false }
+        if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) { return $false }
+        $null = $Host.UI.RawUI.WindowSize
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Format-TuiPad {
+    param(
+        [string]$Text = '',
+        [int]$Width = 74
+    )
+    if ($null -eq $Text) { $Text = '' }
+    if ($Text.Length -gt $Width) {
+        return $Text.Substring(0, $Width - 3) + '...'
+    }
+    return $Text.PadRight($Width, ' ')
+}
+
+function Format-TuiBar {
+    param(
+        [int]$Percent,
+        [int]$Width = 24
+    )
+    if ($Percent -lt 0) { $Percent = 0 }
+    if ($Percent -gt 100) { $Percent = 100 }
+    $filled = [int][Math]::Round(($Percent / 100.0) * $Width)
+    $empty = [Math]::Max(0, $Width - $filled)
+    return ('[' + ('#' * $filled) + ('.' * $empty) + ']')
+}
+
+function Write-TuiStatusTag {
+    param(
+        [string]$Status,
+        [switch]$NoNewline
+    )
+    $s = ([string]$Status).ToUpperInvariant()
+    $label = ' INFO '
+    $fg = 'Cyan'
+    switch ($s) {
+        'PASS'        { $label = ' PASS '; $fg = 'Green' }
+        'OK'          { $label = '  OK  '; $fg = 'Green' }
+        'BUY'         { $label = ' BUY  '; $fg = 'Green' }
+        'CLEAN'       { $label = 'CLEAN '; $fg = 'Green' }
+        'WARN'        { $label = ' WARN '; $fg = 'Yellow' }
+        'CAUTION'     { $label = 'CAUTN '; $fg = 'Yellow' }
+        'FAIL'        { $label = ' FAIL '; $fg = 'Red' }
+        'LOCKED'      { $label = 'LOCKED'; $fg = 'Red' }
+        'DO NOT BUY'  { $label = 'REJECT'; $fg = 'Red' }
+        'UNAVAILABLE' { $label = ' N/A  '; $fg = 'DarkGray' }
+        'SKIPPED'     { $label = ' SKIP '; $fg = 'DarkGray' }
+        'RUN'         { $label = ' .... '; $fg = 'Cyan' }
+        default       { $label = (' ' + $s.PadRight(4).Substring(0, 4) + ' '); $fg = 'Gray' }
+    }
+    Write-Host '[' -NoNewline -ForegroundColor DarkGray
+    Write-Host $label -NoNewline -ForegroundColor $fg
+    if ($NoNewline) {
+        Write-Host ']' -NoNewline -ForegroundColor DarkGray
+    } else {
+        Write-Host ']' -ForegroundColor DarkGray
+    }
+}
+
+function Show-TuiHeader {
+    param(
+        [bool]$IsAdmin = (Test-IsAdmin),
+        [string]$Subtitle = 'Pre-Purchase Laptop Diagnostic, Corporate Lock & Silent Installer'
+    )
+    $w = 88
+    $line = '+' + ('=' * $w) + '+'
+    $div  = '+' + ('-' * $w) + '+'
+
+    Write-Host ''
+    Write-Host $line -ForegroundColor Cyan
+    $titleText = ("  LAPTOP INSPECT v{0}  |  WINDOWS BUYER & REFURBISHER SUITE" -f $script:ToolVersion)
+    Write-Host ('|' + (Format-TuiPad -Text $titleText -Width $w) + '|') -ForegroundColor White
+    Write-Host ('|' + (Format-TuiPad -Text ("  " + $Subtitle) -Width $w) + '|') -ForegroundColor DarkCyan
+    Write-Host $div -ForegroundColor Cyan
+
+    $privStr = if ($IsAdmin) { '[ADMIN: Full BIOS/BitLocker/SMART]' } else { '[STANDARD USER: Limited WMI]' }
+    $privCol = if ($IsAdmin) { 'Green' } else { 'Yellow' }
+    $hostStr = ("  Host: {0}  |  PS: v{1}  |  Mode: " -f $env:COMPUTERNAME, $PSVersionTable.PSVersion.Major)
+    $rem = [Math]::Max(0, $w - $hostStr.Length - $privStr.Length)
+
+    Write-Host '|' -NoNewline -ForegroundColor Cyan
+    Write-Host $hostStr -NoNewline -ForegroundColor Gray
+    Write-Host $privStr -NoNewline -ForegroundColor $privCol
+    Write-Host (' ' * $rem) -NoNewline
+    Write-Host '|' -ForegroundColor Cyan
+    Write-Host $line -ForegroundColor Cyan
+}
+
+function Write-TuiStepStart {
+    param(
+        [int]$Index,
+        [int]$Total,
+        [string]$Title
+    )
+    $pct = if ($Total -gt 0) { [int][Math]::Round((($Index - 1) / [double]$Total) * 100) } else { 0 }
+    try {
+        Write-Progress -Activity "$($script:ToolName) v$($script:ToolVersion)" -Status ("[$Index/$Total] $Title") -PercentComplete $pct
+    } catch {}
+
+    $script:CurrentStepRow = -1
+    if (Test-InteractiveConsole) {
+        try { $script:CurrentStepRow = [Console]::CursorTop } catch { $script:CurrentStepRow = -1 }
+    }
+    Write-Host '  ' -NoNewline
+    Write-TuiStatusTag -Status 'RUN' -NoNewline
+    Write-Host (" [{0}/{1}] {2}..." -f $Index, $Total, $Title) -ForegroundColor Cyan
+}
+
+function Complete-TuiStep {
+    param(
+        [int]$Index,
+        [int]$Total,
+        [string]$Title,
+        [string]$Status = 'PASS',
+        [string]$Summary = '',
+        [double]$Seconds = 0.0
+    )
+    if ($script:CurrentStepRow -ge 0 -and (Test-InteractiveConsole)) {
+        try {
+            [Console]::SetCursorPosition(0, $script:CurrentStepRow)
+            Write-Host (' ' * 76) -NoNewline
+            [Console]::SetCursorPosition(0, $script:CurrentStepRow)
+        } catch {}
+    }
+
+    $titlePad = Format-TuiPad -Text ("[{0}/{1}] {2}" -f $Index, $Total, $Title) -Width 31
+    $sumPad   = Format-TuiPad -Text $Summary -Width 41
+    $secStr   = ("{0,5:0.0}s" -f $Seconds)
+
+    Write-Host '  ' -NoNewline
+    Write-TuiStatusTag -Status $Status -NoNewline
+    Write-Host (' ' + $titlePad + ' ') -NoNewline -ForegroundColor White
+    Write-Host $sumPad -NoNewline -ForegroundColor Gray
+    Write-Host (' ' + $secStr) -ForegroundColor DarkGray
+}
+
+function Show-TuiExecutiveSummary {
+    param(
+        $ReportData,
+        [string]$ReportPath
+    )
+    $w = 88
+    $top = '+' + ('=' * $w) + '+'
+    $mid = '+' + ('-' * $w) + '+'
+    $s    = $ReportData.Scoring
+    $sys  = $ReportData.System
+    $corp = $ReportData.CorporateLock
+    $cpu  = $ReportData.Cpu
+    $gpu  = $ReportData.Gpu
+    $ram  = $ReportData.Ram
+    $stor = $ReportData.Storage
+    $bat  = $ReportData.Battery
+    $per  = $ReportData.Peripherals
+
+    $vColor = switch ($s.Verdict) {
+        'BUY'        { 'Green' }
+        'CAUTION'    { 'Yellow' }
+        'DO NOT BUY' { 'Red' }
+        default      { 'White' }
+    }
+    $vBanner = switch ($s.Verdict) {
+        'BUY'        { 'APPROVED TO BUY (CLEAN & HEALTHY)' }
+        'CAUTION'    { 'BUY WITH CAUTION / NEGOTIATE' }
+        'DO NOT BUY' { 'DO NOT BUY - CRITICAL ISSUE' }
+        default      { $s.Verdict }
+    }
+
+    Write-Host ''
+    Write-Host $top -ForegroundColor Cyan
+    Write-Host ('|' + (Format-TuiPad -Text ("  EXECUTIVE BUYER SCORECARD  |  {0} {1}" -f $sys.Manufacturer, $sys.Model) -Width $w) + '|') -ForegroundColor White
+    Write-Host $mid -ForegroundColor Cyan
+
+    # Verdict & Gauge line (guaranteed <= 88 chars)
+    $bar = Format-TuiBar -Percent $s.Score -Width 18
+    $vLineLeft = ("  VERDICT : {0}" -f $vBanner)
+    $vLineRight = ("Score: {0,3}/100 {1}  " -f $s.Score, $bar)
+    $gap1 = [Math]::Max(1, $w - $vLineLeft.Length - $vLineRight.Length)
+    Write-Host '|' -NoNewline -ForegroundColor Cyan
+    Write-Host $vLineLeft -NoNewline -ForegroundColor $vColor
+    Write-Host (' ' * $gap1) -NoNewline
+    Write-Host $vLineRight -NoNewline -ForegroundColor White
+    Write-Host '|' -ForegroundColor Cyan
+
+    $idLine = ("  Serial  : {0}  |  BIOS: {1} ({2})  |  Scan: {3}s" -f $sys.SerialNumber, $sys.BiosVersion, $sys.BiosDate, $ReportData.Meta.DurationSeconds)
+    Write-Host ('|' + (Format-TuiPad -Text $idLine -Width $w) + '|') -ForegroundColor Gray
+    Write-Host $mid -ForegroundColor Cyan
+
+    # Section A: Corporate Lock 8-Point Matrix
+    $lockTitle = if ($corp.ConfirmedCorporateLock) { '  CORPORATE LOCK AUDIT : [LOCKED / MANAGED - HIGH RISK]' } else { '  CORPORATE LOCK AUDIT : [NO LOCAL LOCK DETECTED]' }
+    $lockCol   = if ($corp.ConfirmedCorporateLock) { 'Red' } else { 'Green' }
+    Write-Host ('|' + (Format-TuiPad -Text $lockTitle -Width $w) + '|') -ForegroundColor $lockCol
+
+    $cRow1 = ("    Autopilot : {0,-11} | Entra/AD Join : {1,-11} | Intune/MDM : {2,-11}" -f $corp.Autopilot.Status, $corp.DomainJoinStatus, $corp.Mdm.Status)
+    $cRow2 = ("    Computrace: {0,-11} | BIOS Password : {1,-11} | BitLocker  : {2,-11}" -f $corp.Computrace.Status, $corp.BiosSecurity.Status, $corp.BitLocker.Status)
+    $cRow3 = ("    RMM / EDR : {0,-11} | Win License   : {1,-18} | OEM Key : {2}" -f $corp.RmmEdr.Status, ("{0} ({1})" -f $corp.Activation.LicenseStatus, $corp.Activation.Channel), $(if ($corp.Activation.HasOemFirmwareKey) { 'Present' } else { 'None' }))
+    Write-Host ('|' + (Format-TuiPad -Text $cRow1 -Width $w) + '|') -ForegroundColor Gray
+    Write-Host ('|' + (Format-TuiPad -Text $cRow2 -Width $w) + '|') -ForegroundColor Gray
+    Write-Host ('|' + (Format-TuiPad -Text $cRow3 -Width $w) + '|') -ForegroundColor Gray
+    Write-Host $mid -ForegroundColor Cyan
+
+    # Section B: Hardware Summary
+    Write-Host ('|' + (Format-TuiPad -Text '  HARDWARE & BENCHMARK TELEMETRY' -Width $w) + '|') -ForegroundColor Cyan
+
+    $cpuStressTxt = if ($cpu.StressSkipped) { 'Stress=Skipped' } elseif ($cpu.VerificationPassed) { "Int+FP=PASS ($($cpu.IntOpsPerSec)/s)" } else { 'Int+FP=FAIL!' }
+    $cpuTempTxt   = if ($null -ne $cpu.PeakTempC) { "Peak=$($cpu.PeakTempC)C" } else { 'Temp=N/A' }
+    $hwCpu = ("    CPU     : {0} ({1}C/{2}T) | {3} | {4}" -f $cpu.CpuName, $cpu.PhysicalCores, $cpu.LogicalProcessors, $cpuStressTxt, $cpuTempTxt)
+
+    $gpuNames = @($gpu.Gpus | Sort-Object { $_.Type -ne 'Discrete GPU' } | ForEach-Object { "$($_.Name) [$($_.VramGB)GB$(if ($_.ErrorCode -ne 0) { ", Err=$($_.ErrorCode)" })]" }) -join '; '
+    $hwGpu = ("    GPU     : {0}" -f $(if ($gpuNames) { $gpuNames } else { 'None' }))
+
+    $ramUp = if ($ram.FreeSlots -gt 0) { "$($ram.FreeSlots) free slot(s)" } elseif ($ram.SolderedDetected) { 'Soldered' } else { '0 free slots' }
+    $hwRam = ("    RAM     : {0} GB ({1}/{2} slots, {3}) | 128MB Pattern: {4}" -f $ram.TotalGB, $ram.UsedSlots, $ram.TotalSlots, $ramUp, $ram.PatternTest.Status)
+
+    $diskList = @($stor.Disks | Where-Object { -not $_.IsExternal } | ForEach-Object {
+        $wStr = if ($null -ne $_.WearPercent) { "Wear=$($_.WearPercent)%" } else { 'Wear=N/A' }
+        "$($_.FriendlyName) ($($_.SizeGB)GB, $($_.HealthStatus), $wStr)"
+    }) -join '; '
+    $benchTxt = if ($stor.Benchmark -and $stor.Benchmark.SeqReadMBs) { "R:$($stor.Benchmark.SeqReadMBs) W:$($stor.Benchmark.SeqWriteMBs) MB/s" } else { 'Bench=Skipped' }
+    $hwDisk = ("    Storage : {0} | {1}" -f $(if ($diskList) { $diskList } else { 'None' }), $benchTxt)
+
+    $batTxt = if ($bat.BatteryCount -eq 0) {
+        $bat.Condition
+    } else {
+        ("{0}% Health ({1}) | Cycles: {2} | Charge: {3}% | AC: {4}" -f $bat.OverallHealthPercent, $bat.Condition, $(if ($null -ne $bat.MaxCycleCount) { $bat.MaxCycleCount } else { 'N/A' }), $bat.CurrentChargePercent, $(if ($bat.AcOnline) { 'Online' } else { 'Battery' }))
+    }
+    $hwBat = ("    Battery : {0}" -f $batTxt)
+
+    $actErrCount = @($per.DeviceErrors | Where-Object { -not $_.IsDisabled }).Count
+    $gwTxt = if ($per.Network.GatewayIp) { "$($per.Network.GatewayIp) ($(if ($per.Network.GatewayReachable) { "$($per.Network.GatewayLatencyMs)ms" } else { 'Unreachable' }))" } else { 'No Gateway' }
+    $hwPer = ("    Network : {0} | Gateway: {1} | DevMgr Errors: {2}" -f $per.Network.WifiGeneration, $gwTxt, $actErrCount)
+
+    foreach ($row in @($hwCpu, $hwGpu, $hwRam, $hwDisk, $hwBat, $hwPer)) {
+        Write-Host ('|' + (Format-TuiPad -Text $row -Width $w) + '|') -ForegroundColor White
+    }
+
+    if ($s.CriticalFlags.Count -gt 0) {
+        Write-Host $mid -ForegroundColor Cyan
+        Write-Host ('|' + (Format-TuiPad -Text '  CRITICAL REASONS TO REJECT:' -Width $w) + '|') -ForegroundColor Red
+        foreach ($cf in $s.CriticalFlags) {
+            Write-Host ('|' + (Format-TuiPad -Text ("    [X] " + $cf) -Width $w) + '|') -ForegroundColor Red
+        }
+    }
+    if ($s.Warnings.Count -gt 0) {
+        Write-Host $mid -ForegroundColor Cyan
+        Write-Host ('|' + (Format-TuiPad -Text '  WARNINGS / NEGOTIATION POINTS:' -Width $w) + '|') -ForegroundColor Yellow
+        foreach ($wn in $s.Warnings) {
+            Write-Host ('|' + (Format-TuiPad -Text ("    [!] " + $wn) -Width $w) + '|') -ForegroundColor Yellow
+        }
+    }
+
+    Write-Host $mid -ForegroundColor Cyan
+    Write-Host ('|' + (Format-TuiPad -Text ("  Report  : " + (Split-Path -Leaf $ReportPath)) -Width $w) + '|') -ForegroundColor Cyan
+    Write-Host ('|' + (Format-TuiPad -Text ("  Folder  : " + (Split-Path -Parent $ReportPath)) -Width $w) + '|') -ForegroundColor DarkGray
+    Write-Host $top -ForegroundColor Cyan
+}
+
+function Build-PlainTextSummaryFromPs {
+    param($ReportData)
+    $s   = $ReportData.Scoring
+    $sys = $ReportData.System
+    $corp = $ReportData.CorporateLock
+    $cpu = $ReportData.Cpu
+    $gpu = $ReportData.Gpu
+    $ram = $ReportData.Ram
+    $stor = $ReportData.Storage
+    $bat = $ReportData.Battery
+
+    $lines = @()
+    $lines += "=== LAPTOP INSPECT v$($ReportData.Meta.ToolVersion) REPORT ==="
+    $lines += "Verdict: $($s.Verdict) ($($s.Score)/100)"
+    $lines += "Model: $($sys.Manufacturer) $($sys.Model) | Serial: $($sys.SerialNumber)"
+    $lines += "Corporate Lock: $(if ($corp.ConfirmedCorporateLock) { 'LOCKED / MANAGED' } else { 'No Local Lock' }) (Autopilot=$($corp.Autopilot.Status), MDM=$($corp.Mdm.Status), Computrace=$($corp.Computrace.Status), BIOS-Pwd=$($corp.BiosSecurity.Status), BitLocker=$($corp.BitLocker.Status))"
+    $lines += "CPU: $($cpu.CpuName) ($($cpu.PhysicalCores)C/$($cpu.LogicalProcessors)T)"
+    $lines += "GPU: " + ((@($gpu.Gpus | ForEach-Object { "$($_.Name) ($($_.VramGB)GB)" })) -join '; ')
+    $lines += "RAM: $($ram.TotalGB) GB ($($ram.UsedSlots)/$($ram.TotalSlots) slots)"
+    $lines += "Storage: " + ((@($stor.Disks | Where-Object { -not $_.IsExternal } | ForEach-Object { "$($_.FriendlyName) $($_.SizeGB)GB [$($_.HealthStatus)]" })) -join '; ')
+    $lines += "Battery: $(if ($bat.BatteryCount -gt 0) { "$($bat.OverallHealthPercent)% ($($bat.Condition), Cycles=$($bat.MaxCycleCount))" } else { $bat.Condition })"
+    if ($s.CriticalFlags.Count -gt 0) { $lines += "CRITICAL: " + ($s.CriticalFlags -join ' | ') }
+    if ($s.Warnings.Count -gt 0) { $lines += "WARNINGS: " + ($s.Warnings -join ' | ') }
+    return ($lines -join "`r`n")
+}
+
+function Invoke-TuiSilentInstallerMenu {
+    if (-not (Test-InteractiveConsole)) { return }
+    $presets = @(Get-AppPresets)
+    $catalog = @(Get-AppCatalog)
+    $wg = Get-WingetInfo
+
+    while ($true) {
+        try { Clear-Host } catch {}
+        Show-TuiHeader -Subtitle 'Silent Zero-Prompt Software Installer (Ninite / WinUtil Style)'
+        $wgTxt = if ($wg.Available) { "Winget Ready ($($wg.Version))" } else { 'Winget Not Found (Will Auto-Bootstrap on Install)' }
+        Write-Host ("  Engine : {0}  |  Flags: --silent --accept-package-agreements --disable-interactivity" -f $wgTxt) -ForegroundColor Gray
+        Write-Host ''
+        Write-Host '  ONE-CLICK PRESETS (Instant Zero-Prompt Install):' -ForegroundColor Cyan
+        for ($i = 0; $i -lt $presets.Count; $i++) {
+            $p = $presets[$i]
+            Write-Host ("    [{0}] {1,-22} - {2} ({3})" -f ($i + 1), $p.Name, $p.Desc, ($p.Apps -join ', ')) -ForegroundColor White
+        }
+        Write-Host ''
+        Write-Host '  CUSTOM & MAINTENANCE:' -ForegroundColor Cyan
+        Write-Host '    [5] Interactive App Checklist (Toggle any of the 39 apps with Spacebar)' -ForegroundColor White
+        Write-Host '    [6] Enter Custom Winget Package IDs or Short Keys' -ForegroundColor White
+        Write-Host '    [7] Upgrade All Currently Installed Apps Silently (winget upgrade --all)' -ForegroundColor White
+        Write-Host '    [D] Dry-Run Preview Mode (Test commands without installing)' -ForegroundColor DarkCyan
+        Write-Host '    [B] Back / Exit Installer Menu' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  Select option [1-7, D, B]: ' -NoNewline -ForegroundColor Cyan
+
+        $k = [Console]::ReadKey($true)
+        $ch = $k.KeyChar.ToString().ToUpperInvariant()
+        Write-Host $ch
+
+        if ($ch -eq 'B' -or $k.Key -eq [ConsoleKey]::Escape) {
+            return
+        } elseif ($ch -in @('1','2','3','4')) {
+            $pIdx = [int]$ch - 1
+            $chosenPreset = $presets[$pIdx]
+            $targets = @(Resolve-InstallTargets -Preset $chosenPreset.Key)
+            Write-Host ''
+            Write-Host ("  [+] Starting Silent Preset '{0}' ({1} packages)..." -f $chosenPreset.Name, $targets.Count) -ForegroundColor Green
+            $res = @(Invoke-SilentAppInstallBatch -Targets $targets -ConsoleOutput)
+            Write-Host ''
+            foreach ($r in $res) {
+                Write-Host '    ' -NoNewline
+                Write-TuiStatusTag -Status $(if ($r.Success) { 'OK' } else { 'FAIL' }) -NoNewline
+                Write-Host (" {0} ({1}) -> {2}" -f $r.Name, $r.WingetId, $r.Status)
+            }
+            Write-Host ''
+            Read-Host '  Press Enter to return to Installer Menu' | Out-Null
+        } elseif ($ch -eq 'D') {
+            $targets = @(Resolve-InstallTargets -Preset 'essentials')
+            Write-Host ''
+            Write-Host '  [+] Running Dry-Run Preview for Resale Essentials...' -ForegroundColor Cyan
+            [void](Invoke-SilentAppInstallBatch -Targets $targets -DryRun -ConsoleOutput)
+            Write-Host ''
+            Read-Host '  Press Enter to return to Installer Menu' | Out-Null
+        } elseif ($ch -eq '6') {
+            Write-Host ''
+            $rawInput = Read-Host '  Enter short keys or Winget IDs (comma-separated, e.g. chrome,vlc,7zip)'
+            if (-not [string]::IsNullOrWhiteSpace($rawInput)) {
+                try {
+                    $targets = @(Resolve-InstallTargets -KeysOrIds @($rawInput))
+                    if ($targets.Count -gt 0) {
+                        $res = @(Invoke-SilentAppInstallBatch -Targets $targets -ConsoleOutput)
+                        Write-Host ''
+                        foreach ($r in $res) {
+                            Write-Host '    ' -NoNewline
+                            Write-TuiStatusTag -Status $(if ($r.Success) { 'OK' } else { 'FAIL' }) -NoNewline
+                            Write-Host (" {0} -> {1}" -f $r.Name, $r.Status)
+                        }
+                    }
+                } catch {
+                    Write-Host ("  [!] " + $_.Exception.Message) -ForegroundColor Red
+                }
+                Read-Host '  Press Enter to continue' | Out-Null
+            }
+        } elseif ($ch -eq '7') {
+            Write-Host ''
+            Write-Host '  [+] Running silent winget upgrade --all...' -ForegroundColor Green
+            $res = @(Invoke-SilentAppInstallBatch -UpgradeAll -ConsoleOutput)
+            Read-Host '  Press Enter to continue' | Out-Null
+        } elseif ($ch -eq '5') {
+            Invoke-TuiAppChecklistPicker -Catalog $catalog
+        }
+    }
+}
+
+function Invoke-TuiAppChecklistPicker {
+    param([array]$Catalog)
+    $selected = @{}
+    $cursor = 0
+    $pageSize = 15
+    $total = $Catalog.Count
+
+    while ($true) {
+        try { Clear-Host } catch {}
+        $selCount = @($selected.Keys | Where-Object { $selected[$_] }).Count
+        Show-TuiHeader -Subtitle ("Interactive App Picker  |  Selected: $selCount / $total apps")
+        Write-Host '  Controls: [Up/Down] Move  [Space] Toggle  [E] Essentials  [C] Clear  [Enter] Install  [Esc] Back' -ForegroundColor Yellow
+        Write-Host ''
+
+        $startIdx = [Math]::Floor($cursor / $pageSize) * $pageSize
+        $endIdx = [Math]::Min($total - 1, $startIdx + $pageSize - 1)
+        $pageNum = [int]([Math]::Floor($cursor / $pageSize) + 1)
+        $totalPages = [int][Math]::Ceiling($total / [double]$pageSize)
+
+        Write-Host ("  Page {0}/{1}:" -f $pageNum, $totalPages) -ForegroundColor DarkCyan
+        for ($i = $startIdx; $i -le $endIdx; $i++) {
+            $app = $Catalog[$i]
+            $isCur = ($i -eq $cursor)
+            $isChk = [bool]$selected[$app.Key]
+            $box = if ($isChk) { '[X]' } else { '[ ]' }
+            $ptr = if ($isCur) { ' > ' } else { '   ' }
+            $line = ("{0}{1} {2,-22} [{3,-22}] {4}" -f $ptr, $box, $app.Name, $app.Category, $app.Desc)
+            if ($isCur) {
+                Write-Host (Format-TuiPad -Text $line -Width 76) -ForegroundColor Black -BackgroundColor Cyan
+            } elseif ($isChk) {
+                Write-Host $line -ForegroundColor Green
+            } else {
+                Write-Host $line -ForegroundColor Gray
+            }
+        }
+
+        $key = [Console]::ReadKey($true)
+        if ($key.Key -eq [ConsoleKey]::Escape -or $key.KeyChar -eq 'b' -or $key.KeyChar -eq 'B') {
+            return
+        } elseif ($key.Key -eq [ConsoleKey]::UpArrow) {
+            $cursor = ($cursor - 1 + $total) % $total
+        } elseif ($key.Key -eq [ConsoleKey]::DownArrow) {
+            $cursor = ($cursor + 1) % $total
+        } elseif ($key.Key -eq [ConsoleKey]::PageDown) {
+            $cursor = [Math]::Min($total - 1, $cursor + $pageSize)
+        } elseif ($key.Key -eq [ConsoleKey]::PageUp) {
+            $cursor = [Math]::Max(0, $cursor - $pageSize)
+        } elseif ($key.Key -eq [ConsoleKey]::Spacebar) {
+            $k = $Catalog[$cursor].Key
+            $selected[$k] = -not [bool]$selected[$k]
+        } elseif ($key.KeyChar -eq 'c' -or $key.KeyChar -eq 'C') {
+            $selected = @{}
+        } elseif ($key.KeyChar -eq 'e' -or $key.KeyChar -eq 'E') {
+            $selected = @{}
+            foreach ($ak in @('chrome','vlc','7zip','sumatra','vcredist64','vcredist86','dotnet8','directx')) { $selected[$ak] = $true }
+        } elseif ($key.Key -eq [ConsoleKey]::Enter) {
+            $pickedKeys = @($selected.Keys | Where-Object { $selected[$_] })
+            if ($pickedKeys.Count -eq 0) {
+                continue
+            }
+            Write-Host ''
+            $targets = @(Resolve-InstallTargets -KeysOrIds $pickedKeys)
+            Write-Host ("  [+] Installing {0} selected app(s) silently..." -f $targets.Count) -ForegroundColor Green
+            $res = @(Invoke-SilentAppInstallBatch -Targets $targets -ConsoleOutput)
+            Write-Host ''
+            foreach ($r in $res) {
+                Write-Host '    ' -NoNewline
+                Write-TuiStatusTag -Status $(if ($r.Success) { 'OK' } else { 'FAIL' }) -NoNewline
+                Write-Host (" {0} -> {1}" -f $r.Name, $r.Status)
+            }
+            Write-Host ''
+            Read-Host '  Press Enter to return' | Out-Null
+            return
+        }
+    }
+}
+
+function Show-TuiMainMenu {
+    param([bool]$IsAdmin = (Test-IsAdmin))
+
+    $options = @(
+        [PSCustomObject]@{ Key='1'; Action='FullAudit';    Title='[1] Full Pre-Purchase Audit + Interactive Report'; Desc='Recommended: Corporate Locks + 10s Stress + Browser Wizard (~20s)' },
+        [PSCustomObject]@{ Key='2'; Action='QuickAudit';   Title='[2] Quick Audit + Interactive Report';             Desc='Fast: Skips CPU/RAM/Disk Stress Benchmarks (~7s)' },
+        [PSCustomObject]@{ Key='3'; Action='TerminalOnly'; Title='[3] Terminal-Only Quick Scorecard (No Browser)';   Desc='Headless: Fast Corporate Lock + Hardware Scorecard in Console' },
+        [PSCustomObject]@{ Key='4'; Action='InstallerTui'; Title='[4] Silent App Installer TUI (Ninite / WinUtil)';  Desc='Zero Prompts: Pick Presets or 39 Apps with Arrow Keys & Spacebar' },
+        [PSCustomObject]@{ Key='5'; Action='AuditAndEss';  Title='[5] Full Audit + Auto-Install Resale Essentials';  Desc='All-in-One: Inspect Laptop & Silently Install 8 Buyer Essentials' },
+        [PSCustomObject]@{ Key='6'; Action='UpgradeAll';   Title='[6] Silent Upgrade All Existing Apps';             Desc='Runs winget upgrade --all with zero Next/Accept prompts' }
+    )
+    if (-not $IsAdmin) {
+        $options += [PSCustomObject]@{ Key='E'; Action='Elevate'; Title='[E] Relaunch as Administrator (Recommended)'; Desc='Unlocks Vendor BIOS WMI, BitLocker, MDM CIM, and SSD SMART Wear' }
+    }
+    $options += [PSCustomObject]@{ Key='0'; Action='Exit'; Title='[0] Exit LaptopInspect'; Desc='Close without running' }
+
+    $idx = 0
+    while ($true) {
+        try { Clear-Host } catch {}
+        Show-TuiHeader -IsAdmin $IsAdmin
+        Write-Host '  Use [Up/Down] Arrows + [Enter], or press hotkey [1-6, 0]:' -ForegroundColor Yellow
+        Write-Host ''
+
+        for ($i = 0; $i -lt $options.Count; $i++) {
+            $opt = $options[$i]
+            if ($i -eq $idx) {
+                $barLine = Format-TuiPad -Text ("  > " + $opt.Title) -Width 90
+                Write-Host $barLine -ForegroundColor Black -BackgroundColor Cyan
+                Write-Host ("      " + $opt.Desc) -ForegroundColor Cyan
+            } else {
+                Write-Host ("    " + $opt.Title) -ForegroundColor White
+                Write-Host ("      " + $opt.Desc) -ForegroundColor DarkGray
+            }
+            Write-Host ''
+        }
+
+        $k = [Console]::ReadKey($true)
+        if ($k.Key -eq [ConsoleKey]::UpArrow) {
+            $idx = ($idx - 1 + $options.Count) % $options.Count
+        } elseif ($k.Key -eq [ConsoleKey]::DownArrow) {
+            $idx = ($idx + 1) % $options.Count
+        } elseif ($k.Key -eq [ConsoleKey]::Enter) {
+            return $options[$idx].Action
+        } elseif ($k.Key -eq [ConsoleKey]::Escape) {
+            return 'Exit'
+        } else {
+            $ch = $k.KeyChar.ToString().ToUpperInvariant()
+            $matched = $options | Where-Object { $_.Key -eq $ch } | Select-Object -First 1
+            if ($matched) { return $matched.Action }
+        }
+    }
+}
+# --- END 75-tui.ps1 ---
+
 # --- BEGIN 80-report.ps1 ---
 function Build-ReportHtml {
     param(
@@ -5049,70 +5586,73 @@ function Show-ConsoleExecutiveSummary {
         $ReportData,
         [string]$ReportPath
     )
-    $s = $ReportData.Scoring
-    $sys = $ReportData.System
-    $corp = $ReportData.CorporateLock
-    $cpu = $ReportData.Cpu
-    $gpu = $ReportData.Gpu
-    $ram = $ReportData.Ram
-    $stor = $ReportData.Storage
-    $bat = $ReportData.Battery
-    $per = $ReportData.Peripherals
-
-    $vColor = switch ($s.Verdict) {
-        'BUY'        { 'Green' }
-        'CAUTION'    { 'Yellow' }
-        'DO NOT BUY' { 'Red' }
-        default      { 'White' }
-    }
-
-    Write-Host ""
-    Write-Host "======================================================================" -ForegroundColor Cyan
-    Write-Host ("  LAPTOP INSPECT v{0} - PRE-PURCHASE AUDIT SUMMARY" -f $ReportData.Meta.ToolVersion) -ForegroundColor Cyan
-    Write-Host "======================================================================" -ForegroundColor Cyan
-    Write-Host ("  VERDICT        : {0}  (Score: {1}/100)" -f $s.Verdict, $s.Score) -ForegroundColor $vColor
-    Write-Host ("  Machine        : {0} {1} | Serial: {2}" -f $sys.Manufacturer, $sys.Model, $sys.SerialNumber)
-    Write-Host ("  Session Mode   : {0} | Duration: {1}s" -f $(if ($corp.IsAdminSession) { 'Administrator' } else { 'Standard User' }), $ReportData.Meta.DurationSeconds)
-
-    $corpTxt = if ($corp.ConfirmedCorporateLock) { 'LOCKED / MANAGED (HIGH RISK)' } else { 'No Local Lock Detected' }
-    $corpCol = if ($corp.ConfirmedCorporateLock) { 'Red' } else { 'Green' }
-    Write-Host ("  Corporate Lock : {0}" -f $corpTxt) -ForegroundColor $corpCol
-    Write-Host ("  Autopilot/MDM  : Autopilot={0} | MDM={1} | AAD/Domain={2}" -f $corp.Autopilot.Status, $corp.Mdm.Status, $corp.DomainJoinStatus)
-    Write-Host ("  BIOS/Computrace: BIOS-Pwd={0} | Computrace={1} | BitLocker={2}" -f $corp.BiosSecurity.Status, $corp.Computrace.Status, $corp.BitLocker.Status)
-
-    $batTxt = if ($bat.BatteryCount -eq 0) { $bat.Condition } else { ("{0}% health ({1}), Cycles={2}" -f $bat.OverallHealthPercent, $bat.Condition, $(if ($null -ne $bat.MaxCycleCount) { $bat.MaxCycleCount } else { 'N/A' })) }
-    Write-Host ("  Battery        : {0}" -f $batTxt)
-    Write-Host ("  CPU            : {0} ({1}C/{2}T) | Stress={3} | Peak={4}" -f $cpu.CpuName, $cpu.PhysicalCores, $cpu.LogicalProcessors, $(if ($cpu.StressSkipped) { 'Skipped' } elseif ($cpu.VerificationPassed) { 'PASS' } else { 'FAIL' }), $(if ($null -ne $cpu.PeakTempC) { "$($cpu.PeakTempC) C" } else { 'UNAVAILABLE' }))
-
-    $gpuNames = @($gpu.Gpus | ForEach-Object { "$($_.Name) ($($_.VramGB)GB, Err=$($_.ErrorCode))" }) -join '; '
-    Write-Host ("  GPU            : {0}" -f $(if ($gpuNames) { $gpuNames } else { 'None' }))
-    Write-Host ("  RAM            : {0} GB ({1}/{2} slots) | Pattern={3}" -f $ram.TotalGB, $ram.UsedSlots, $ram.TotalSlots, $ram.PatternTest.Status)
-
-    $diskNames = @($stor.Disks | Where-Object { -not $_.IsExternal } | ForEach-Object {
-        $wStr = if ($null -ne $_.WearPercent) { "$($_.WearPercent)%" } else { 'N/A' }
-        "$($_.FriendlyName) $($_.SizeGB)GB [$($_.HealthStatus), Wear=$wStr]"
-    }) -join '; '
-    Write-Host ("  Internal Disks : {0}" -f $(if ($diskNames) { $diskNames } else { 'None' }))
-    Write-Host ("  Device Errors  : {0}" -f @($per.DeviceErrors | Where-Object { -not $_.IsDisabled }).Count)
-
-    if ($s.CriticalFlags.Count -gt 0) {
-        Write-Host "  CRITICAL FLAGS :" -ForegroundColor Red
-        foreach ($cf in $s.CriticalFlags) { Write-Host ("    [X] {0}" -f $cf) -ForegroundColor Red }
-    }
-    if ($s.Warnings.Count -gt 0) {
-        Write-Host "  WARNINGS       :" -ForegroundColor Yellow
-        foreach ($w in $s.Warnings) { Write-Host ("    [!] {0}" -f $w) -ForegroundColor Yellow }
-    }
-    Write-Host ("  Saved Report   : {0}" -f $ReportPath) -ForegroundColor Cyan
-    Write-Host "======================================================================" -ForegroundColor Cyan
+    Show-TuiExecutiveSummary -ReportData $ReportData -ReportPath $ReportPath
 }
 
 function Invoke-LaptopInspect {
-    $swTotal = [System.Diagnostics.Stopwatch]::StartNew()
     $isAdmin = Test-IsAdmin
     $targetOutDir = Get-DefaultOutputDirectory -Requested $OutDir
+    $launchedFromTuiTerminalOnly = $false
 
     try {
+        $hasActionFlags = (
+            $Quick -or
+            $SkipStress -or
+            $NoBrowser -or
+            $NoServer -or
+            $JsonOnly -or
+            $InstallOnly -or
+            $UpgradeAll -or
+            $DryRun -or
+            -not [string]::IsNullOrWhiteSpace($InstallPreset) -or
+            ($InstallApps -and $InstallApps.Count -gt 0) -or
+            ($PSBoundParameters.ContainsKey('StressSeconds'))
+        )
+
+        $showMenu = ($Menu -or (-not $NoMenu -and -not $hasActionFlags)) -and (Test-InteractiveConsole)
+        if ($showMenu) {
+            while ($true) {
+                $choice = Show-TuiMainMenu -IsAdmin $isAdmin
+                switch ($choice) {
+                    'Exit' { return }
+                    'Elevate' {
+                        $elevOk = Request-OptionalElevation -TargetOutDir $targetOutDir -MenuFlag -ForceElevate
+                        if ($elevOk) {
+                            Write-Host '  [+] Elevated TUI session launched in new Administrator window.' -ForegroundColor Green
+                            return
+                        }
+                        Read-Host '  Press Enter to return to menu' | Out-Null
+                    }
+                    'InstallerTui' {
+                        Invoke-TuiSilentInstallerMenu
+                    }
+                    'FullAudit' {
+                        break
+                    }
+                    'QuickAudit' {
+                        $Quick = $true; $SkipStress = $true; $StressSeconds = 0
+                        break
+                    }
+                    'TerminalOnly' {
+                        $Quick = $true; $SkipStress = $true; $StressSeconds = 0; $NoBrowser = $true
+                        $launchedFromTuiTerminalOnly = $true
+                        break
+                    }
+                    'AuditAndEss' {
+                        $InstallPreset = 'essentials'
+                        break
+                    }
+                    'UpgradeAll' {
+                        $InstallOnly = $true; $UpgradeAll = $true
+                        break
+                    }
+                }
+                if ($choice -in @('FullAudit', 'QuickAudit', 'TerminalOnly', 'AuditAndEss', 'UpgradeAll')) {
+                    break
+                }
+            }
+        }
+
         $elevatedStarted = Request-OptionalElevation `
             -QuickFlag:$Quick `
             -SkipStressFlag:$SkipStress `
@@ -5127,58 +5667,89 @@ function Invoke-LaptopInspect {
             -InstallOnlyFlag:$InstallOnly `
             -DryRunFlag:$DryRun
         if ($elevatedStarted) {
-            Write-Host "Elevated session started in new window. Exiting non-admin parent." -ForegroundColor Green
+            Write-Host "  [+] Elevated session started in new window. Exiting non-admin parent." -ForegroundColor Green
             return
         }
 
         if ($InstallOnly) {
-            Write-Host ""
-            Write-Host ("=== {0} v{1} - Silent App Installer ===" -f $script:ToolName, $script:ToolVersion) -ForegroundColor Cyan
+            Show-TuiHeader -IsAdmin $isAdmin -Subtitle 'Silent Zero-Prompt Software Installer'
             $targets = @(Resolve-InstallTargets -KeysOrIds $InstallApps -Preset $InstallPreset)
             if ($targets.Count -eq 0 -and -not $UpgradeAll) {
                 throw "No apps specified. Pass -InstallPreset <essentials|office|tech|dev>, -InstallApps <keys/ids>, or -UpgradeAll."
             }
             $resList = @(Invoke-SilentAppInstallBatch -Targets $targets -UpgradeAll:$UpgradeAll -DryRun:$DryRun -ConsoleOutput)
             Write-Host ""
-            Write-Host "=== Silent Install Summary ===" -ForegroundColor Cyan
+            Write-Host "  === Silent Install Summary ===" -ForegroundColor Cyan
             foreach ($ri in $resList) {
-                $col = if ($ri.Success) { 'Green' } else { 'Red' }
-                Write-Host ("  [{0}] {1} ({2}) -> {3}" -f $(if ($ri.Success) { 'OK' } else { 'FAIL' }), $ri.Name, $ri.WingetId, $ri.Status) -ForegroundColor $col
+                Write-Host '  ' -NoNewline
+                Write-TuiStatusTag -Status $(if ($ri.Success) { 'OK' } else { 'FAIL' }) -NoNewline
+                Write-Host (" {0} ({1}) -> {2}" -f $ri.Name, $ri.WingetId, $ri.Status)
             }
             return
         }
 
+        $swTotal = [System.Diagnostics.Stopwatch]::StartNew()
+        if ($showMenu -and (Test-InteractiveConsole)) { try { Clear-Host } catch {} }
+        Show-TuiHeader -IsAdmin $isAdmin
         Write-Host ""
-        Write-Host ("=== {0} v{1} ===" -f $script:ToolName, $script:ToolVersion) -ForegroundColor Cyan
 
-        Write-Step -Index 1 -Total 9 -Title 'System Identity & Environment'
+        $swStep = [System.Diagnostics.Stopwatch]::StartNew()
+        Write-TuiStepStart -Index 1 -Total 9 -Title 'System Identity'
         $sysInfo = Get-SystemIdentity
+        Complete-TuiStep -Index 1 -Total 9 -Title 'System Identity' -Status 'PASS' -Summary ("{0} {1}" -f $sysInfo.Manufacturer, $sysInfo.Model) -Seconds $swStep.Elapsed.TotalSeconds
 
-        Write-Step -Index 2 -Total 9 -Title 'Corporate Lock & Ownership Audit (Autopilot/MDM/Computrace/BIOS/BitLocker)'
+        $swStep.Restart()
+        Write-TuiStepStart -Index 2 -Total 9 -Title 'Corporate Lock Audit'
         $corpAudit = Get-CorporateLockAudit -IsAdmin $isAdmin
+        $corpSt = if ($corpAudit.ConfirmedCorporateLock) { 'LOCKED' } elseif ($corpAudit.BitLocker.Active) { 'WARN' } else { 'CLEAN' }
+        $corpSum = if ($corpAudit.ConfirmedCorporateLock) { 'Lock / Management Detected' } else { "AP=$($corpAudit.Autopilot.Status) MDM=$($corpAudit.Mdm.Status) BL=$($corpAudit.BitLocker.Status)" }
+        Complete-TuiStep -Index 2 -Total 9 -Title 'Corporate Lock Audit' -Status $corpSt -Summary $corpSum -Seconds $swStep.Elapsed.TotalSeconds
 
-        Write-Step -Index 3 -Total 9 -Title 'GPU & Display Adapters'
+        $swStep.Restart()
+        Write-TuiStepStart -Index 3 -Total 9 -Title 'GPU & VRAM Telemetry'
         $nvPath = Find-NvidiaSmiPath
         $gpuInfo = Get-GpuDiagnostics -NvidiaSmiPath $nvPath
+        $gpuTop = $gpuInfo.Gpus | Sort-Object { $_.Type -ne 'Discrete GPU' } | Select-Object -First 1
+        $gpuSum = if ($gpuTop) { "{0} ({1} GB)" -f $gpuTop.Name, $gpuTop.VramGB } else { 'None detected' }
+        Complete-TuiStep -Index 3 -Total 9 -Title 'GPU & VRAM Telemetry' -Status $gpuInfo.Status -Summary $gpuSum -Seconds $swStep.Elapsed.TotalSeconds
 
-        $stressLabel = if ($StressSeconds -gt 0) { "CPU Specs, Verified Workload & $($StressSeconds)s Thermal Load" } else { 'CPU Specs (Stress Skipped)' }
-        Write-Step -Index 4 -Total 9 -Title $stressLabel
+        $swStep.Restart()
+        $stressTitle = if ($StressSeconds -gt 0) { "CPU Math + $($StressSeconds)s Thermal" } else { 'CPU Identity' }
+        Write-TuiStepStart -Index 4 -Total 9 -Title $stressTitle
         $cpuInfo = Get-CpuAndThermalTest -StressSeconds $StressSeconds -NvidiaSmiPath $nvPath
+        $cpuSt = if (-not $cpuInfo.StressSkipped -and -not $cpuInfo.VerificationPassed) { 'FAIL' } elseif ($cpuInfo.ThrottlingSuspected) { 'WARN' } else { 'PASS' }
+        $cpuSum = if ($cpuInfo.StressSkipped) { "{0}C/{1}T (Stress skipped)" -f $cpuInfo.PhysicalCores, $cpuInfo.LogicalProcessors } else { "{0}C/{1}T Int+FP PASS" -f $cpuInfo.PhysicalCores, $cpuInfo.LogicalProcessors }
+        Complete-TuiStep -Index 4 -Total 9 -Title $stressTitle -Status $cpuSt -Summary $cpuSum -Seconds $swStep.Elapsed.TotalSeconds
 
-        Write-Step -Index 5 -Total 9 -Title 'RAM Slots & Verified Pattern Check'
+        $swStep.Restart()
+        Write-TuiStepStart -Index 5 -Total 9 -Title 'RAM Slots & Pattern'
         $ramInfo = Get-RamDiagnostics -SkipStress:$SkipStress
+        $ramSt = if ($ramInfo.PatternTest.Status -eq 'FAIL') { 'FAIL' } else { 'PASS' }
+        Complete-TuiStep -Index 5 -Total 9 -Title 'RAM Slots & Pattern' -Status $ramSt -Summary ("{0} GB ({1}/{2} slots) [{3}]" -f $ramInfo.TotalGB, $ramInfo.UsedSlots, $ramInfo.TotalSlots, $ramInfo.PatternTest.Status) -Seconds $swStep.Elapsed.TotalSeconds
 
-        Write-Step -Index 6 -Total 9 -Title 'Storage SMART Health & Speed Benchmark'
+        $swStep.Restart()
+        Write-TuiStepStart -Index 6 -Total 9 -Title 'Storage SMART & Speed'
         $storInfo = Get-StorageDiagnostics -SkipBench:$SkipStress
+        $d0 = $storInfo.Disks | Where-Object { -not $_.IsExternal } | Select-Object -First 1
+        $storSum = if ($d0) { "{0} ({1} GB) [{2}]" -f $d0.FriendlyName, $d0.SizeGB, $d0.HealthStatus } else { 'No internal disk' }
+        Complete-TuiStep -Index 6 -Total 9 -Title 'Storage SMART & Speed' -Status $storInfo.Status -Summary $storSum -Seconds $swStep.Elapsed.TotalSeconds
 
-        Write-Step -Index 7 -Total 9 -Title 'Battery Health, Cycles & AC Load Stability'
+        $swStep.Restart()
+        Write-TuiStepStart -Index 7 -Total 9 -Title 'Battery & AC Stability'
         $batInfo = Get-BatteryDiagnostics -LoadSamples $cpuInfo.LoadSamples -IsLaptop $sysInfo.IsLaptop
+        $batSum = if ($batInfo.BatteryCount -gt 0) { "{0}% ({1}, {2} cycles)" -f $batInfo.OverallHealthPercent, $batInfo.Condition, $(if ($null -ne $batInfo.MaxCycleCount) { $batInfo.MaxCycleCount } else { 'N/A' }) } else { $batInfo.Condition }
+        Complete-TuiStep -Index 7 -Total 9 -Title 'Battery & AC Stability' -Status $batInfo.Status -Summary $batSum -Seconds $swStep.Elapsed.TotalSeconds
 
-        Write-Step -Index 8 -Total 9 -Title 'Display EDID, Wi-Fi, Gateway Ping, Ports & Device Errors'
+        $swStep.Restart()
+        Write-TuiStepStart -Index 8 -Total 9 -Title 'Display, Wi-Fi & Ports'
         $periphInfo = Get-PeripheralsAndNetwork
         $portSnap = Get-ConnectedPortsSnapshot
+        $errCnt = @($periphInfo.DeviceErrors | Where-Object { -not $_.IsDisabled }).Count
+        $perSum = ("{0} | {1} | Err={2}" -f $periphInfo.Display.PrimaryRes, $periphInfo.Network.WifiGeneration, $errCnt)
+        Complete-TuiStep -Index 8 -Total 9 -Title 'Display, Wi-Fi & Ports' -Status $periphInfo.DeviceErrorStatus -Summary $perSum -Seconds $swStep.Elapsed.TotalSeconds
 
-        Write-Step -Index 9 -Total 9 -Title 'Scoring & Generating Report'
+        $swStep.Restart()
+        Write-TuiStepStart -Index 9 -Total 9 -Title 'Scoring & HTML Report'
         $swTotal.Stop()
 
         $reportObj = [PSCustomObject]@{
@@ -5210,6 +5781,7 @@ function Invoke-LaptopInspect {
         }
 
         $reportObj.Scoring = Get-BuyerVerdict -ReportData $reportObj
+        Complete-TuiStep -Index 9 -Total 9 -Title 'Scoring & HTML Report' -Status $reportObj.Scoring.Verdict -Summary ("Score: {0}/100" -f $reportObj.Scoring.Score) -Seconds $swStep.Elapsed.TotalSeconds
 
         $cliTargets = @()
         if (-not [string]::IsNullOrWhiteSpace($InstallPreset) -or ($InstallApps -and $InstallApps.Count -gt 0)) {
@@ -5217,11 +5789,12 @@ function Invoke-LaptopInspect {
         }
         if ($cliTargets.Count -gt 0 -or $UpgradeAll) {
             Write-Host ""
-            Write-Host "=== Running Silent App Installer Queue ===" -ForegroundColor Cyan
+            Write-Host "  [+] Running Silent App Installer Queue..." -ForegroundColor Cyan
             $cliInstResults = @(Invoke-SilentAppInstallBatch -Targets $cliTargets -UpgradeAll:$UpgradeAll -DryRun:$DryRun -ConsoleOutput)
             foreach ($ri in $cliInstResults) {
-                $col = if ($ri.Success) { 'Green' } else { 'Red' }
-                Write-Host ("  [{0}] {1} -> {2}" -f $(if ($ri.Success) { 'OK' } else { 'FAIL' }), $ri.Name, $ri.Status) -ForegroundColor $col
+                Write-Host '  ' -NoNewline
+                Write-TuiStatusTag -Status $(if ($ri.Success) { 'OK' } else { 'FAIL' }) -NoNewline
+                Write-Host (" {0} -> {1}" -f $ri.Name, $ri.Status)
             }
         }
 
@@ -5251,6 +5824,27 @@ function Invoke-LaptopInspect {
                 Start-ReportHttpServer -ReportData $reportObj -ReportPath $htmlPath
             } else {
                 try { Start-Process $htmlPath | Out-Null } catch {}
+            }
+        } elseif ($launchedFromTuiTerminalOnly -and (Test-InteractiveConsole)) {
+            while ($true) {
+                Write-Host ''
+                Write-Host '  Actions: [O] Open HTML Report  [C] Copy Summary  [I] App Installer  [Enter] Exit: ' -NoNewline -ForegroundColor Yellow
+                $pk = [Console]::ReadKey($true)
+                $pch = $pk.KeyChar.ToString().ToUpperInvariant()
+                Write-Host $pch
+                if ($pk.Key -eq [ConsoleKey]::Enter -or $pk.Key -eq [ConsoleKey]::Escape) {
+                    break
+                } elseif ($pch -eq 'O') {
+                    try { Start-Process $htmlPath | Out-Null } catch {}
+                } elseif ($pch -eq 'C') {
+                    try {
+                        Set-Clipboard -Value (Build-PlainTextSummaryFromPs -ReportData $reportObj)
+                        Write-Host '  [+] Summary copied to clipboard!' -ForegroundColor Green
+                    } catch {}
+                } elseif ($pch -eq 'I') {
+                    Invoke-TuiSilentInstallerMenu
+                    Show-ConsoleExecutiveSummary -ReportData $reportObj -ReportPath $htmlPath
+                }
             }
         }
     } finally {
