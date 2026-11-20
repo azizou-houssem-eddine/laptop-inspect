@@ -1,0 +1,83 @@
+name: CI and Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build and Validate Gates
+        shell: powershell
+        run: |
+          $beforeHash = (Get-FileHash -Path .\inspect.ps1 -Algorithm SHA256).Hash
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $afterHash = (Get-FileHash -Path .\inspect.ps1 -Algorithm SHA256).Hash
+          if ($beforeHash -ne $afterHash) {
+            Write-Error "Committed inspect.ps1 is out of date. Run build.ps1 and commit."
+            exit 1
+          }
+
+      - name: Run Pester Tests
+        shell: powershell
+        run: |
+          Import-Module Pester -MaximumVersion 3.99 -Force
+          Invoke-Pester .\tests\inspect.Tests.ps1 -EnableExit
+
+      - name: Live Quick Smoke Run
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Path .\tests\out -Force | Out-Null
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\inspect.ps1 -Quick -NoBrowser -NoServer -NoElevate -OutDir .\tests\out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $html = Get-ChildItem .\tests\out\LaptopReport_*.html | Select-Object -First 1
+          if (-not $html) { Write-Error "No HTML report generated"; exit 1 }
+          Write-Host "Generated smoke report: $($html.Name) ($($html.Length) bytes)"
+
+  release:
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Package Release Assets
+        shell: powershell
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          New-Item -ItemType Directory -Path .\dist -Force | Out-Null
+          $zipPath = ".\dist\LaptopInspect-$tag.zip"
+          Compress-Archive -Path .\inspect.ps1, .\RUN.bat, .\README.md, .\LICENSE -DestinationPath $zipPath -Force
+          $sums = @()
+          foreach ($f in @('.\inspect.ps1', $zipPath)) {
+            $h = (Get-FileHash -Path $f -Algorithm SHA256).Hash.ToLower()
+            $name = Split-Path $f -Leaf
+            $sums += "$h  $name"
+          }
+          $sums | Set-Content -Path .\dist\SHA256SUMS.txt -Encoding Ascii
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            inspect.ps1
+            dist/LaptopInspect-*.zip
+            dist/SHA256SUMS.txt
+          generate_release_notes: true

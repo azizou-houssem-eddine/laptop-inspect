@@ -1,0 +1,1684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LaptopInspect - Pre-Purchase Diagnostic &amp; Corporate Lock Report</title>
+<style>
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --border: #dfe4ec;
+  --text: #151b26;
+  --muted: #5b6577;
+  --accent: #1d4ed8;
+  --accent-soft: #dbeafe;
+  --pass: #15803d;
+  --pass-bg: #dcfce7;
+  --warn: #b45309;
+  --warn-bg: #fef3c7;
+  --fail: #b91c1c;
+  --fail-bg: #fee2e2;
+  --unavail: #475569;
+  --unavail-bg: #e2e8f0;
+  --shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  --radius: 10px;
+}
+html[data-theme="dark"] {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface-2: #1f2630;
+  --border: #2e3744;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #3b82f6;
+  --accent-soft: #1e3a5f;
+  --pass: #4ade80;
+  --pass-bg: #123522;
+  --warn: #fbbf24;
+  --warn-bg: #3b2a10;
+  --fail: #f87171;
+  --fail-bg: #3d1619;
+  --unavail: #94a3b8;
+  --unavail-bg: #262f3b;
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.45;
+  font-size: 14px;
+}
+.container { max-width: 1220px; margin: 0 auto; padding: 16px; }
+.topbar {
+  position: sticky; top: 0; z-index: 50;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+.topbar-inner {
+  max-width: 1220px; margin: 0 auto; padding: 10px 16px;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-title { font-weight: 700; font-size: 16px; letter-spacing: -0.2px; }
+.brand-sub { font-size: 12px; color: var(--muted); }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn {
+  appearance: none; border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--text); padding: 7px 12px; border-radius: 7px; cursor: pointer;
+  font-size: 13px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+}
+.btn:hover { border-color: var(--accent); }
+.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-primary:hover { filter: brightness(1.08); }
+.btn-pass { background: var(--pass); color: #fff; border-color: var(--pass); }
+.btn-fail { background: var(--fail); color: #fff; border-color: var(--fail); }
+.btn-warn { background: var(--warn); color: #fff; border-color: var(--warn); }
+.btn-sm { padding: 5px 9px; font-size: 12px; }
+
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 16px; margin-bottom: 16px;
+}
+.card h2 { margin: 0 0 12px 0; font-size: 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.card h3 { margin: 12px 0 8px 0; font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+
+.badge {
+  display: inline-block; padding: 3px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase;
+}
+.b-pass { background: var(--pass-bg); color: var(--pass); }
+.b-warn { background: var(--warn-bg); color: var(--warn); }
+.b-fail { background: var(--fail-bg); color: var(--fail); }
+.b-unavail { background: var(--unavail-bg); color: var(--unavail); }
+.b-info { background: var(--accent-soft); color: var(--accent); }
+
+.verdict-banner {
+  display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px;
+}
+@media (max-width: 900px) { .verdict-banner { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .verdict-banner { grid-template-columns: 1fr; } }
+
+.kpi {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px; box-shadow: var(--shadow);
+}
+.kpi-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.kpi-val { font-size: 22px; font-weight: 800; margin-top: 4px; }
+.kpi-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+@media (max-width: 900px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } }
+
+.lock-tile {
+  border: 1px solid var(--border); background: var(--surface-2); border-radius: 8px;
+  padding: 11px; display: flex; flex-direction: column; gap: 6px;
+}
+.lock-tile-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-weight: 700; font-size: 13px; }
+.lock-tile-detail { font-size: 12px; color: var(--muted); word-break: break-word; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 700; }
+
+.alert { padding: 10px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 10px; border: 1px solid transparent; }
+.alert-fail { background: var(--fail-bg); color: var(--fail); border-color: var(--fail); }
+.alert-warn { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+.alert-info { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.alert ul { margin: 4px 0 0 18px; padding: 0; }
+
+/* Wizard */
+.step-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.step-pill {
+  padding: 6px 10px; border-radius: 7px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font-size: 12px; font-weight: 600;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+}
+.step-pill.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--unavail); display: inline-block; }
+.dot.pass { background: var(--pass); }
+.dot.fail { background: var(--fail); }
+.dot.na { background: var(--warn); }
+
+.step-panel { display: none; border-top: 1px solid var(--border); padding-top: 14px; }
+.step-panel.active { display: block; }
+.step-footer {
+  margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px;
+}
+
+/* Keyboard Matrix */
+.kb-wrap { overflow-x: auto; padding: 8px 0; }
+.kb-board { display: inline-flex; gap: 14px; background: var(--surface-2); padding: 12px; border-radius: 8px; border: 1px solid var(--border); }
+.kb-main, .kb-nav, .kb-num { display: flex; flex-direction: column; gap: 4px; }
+.kb-row { display: flex; gap: 4px; }
+.k {
+  min-width: 34px; height: 34px; padding: 0 5px; border-radius: 5px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;
+  user-select: none;
+}
+.k.w15 { min-width: 52px; }
+.k.w175 { min-width: 62px; }
+.k.w2 { min-width: 72px; }
+.k.w225 { min-width: 82px; }
+.k.w6 { min-width: 215px; }
+.k.gap { visibility: hidden; min-width: 18px; }
+.k.hit { background: var(--pass); color: #fff; border-color: var(--pass); }
+.k.chatter { background: var(--warn); color: #000; border-color: var(--warn); }
+
+/* Canvases & Media */
+canvas.test-canvas {
+  width: 100%; max-width: 820px; height: 320px; background: #0f172a;
+  border: 2px solid var(--border); border-radius: 8px; display: block; touch-action: none;
+}
+video.cam-preview {
+  width: 100%; max-width: 520px; min-height: 240px; background: #000;
+  border-radius: 8px; border: 1px solid var(--border); display: block;
+}
+.meter-bar { width: 100%; max-width: 520px; height: 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+.meter-fill { height: 100%; width: 0%; background: var(--pass); transition: width 0.05s; }
+
+/* Fullscreen Screen Overlay */
+#screen-overlay {
+  display: none; position: fixed; inset: 0; z-index: 9999; cursor: pointer;
+  user-select: none; align-items: center; justify-content: center;
+}
+#screen-overlay.active { display: flex; }
+#screen-hud {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.85); color: #fff; padding: 8px 14px;
+  border-radius: 8px; font-size: 13px; pointer-events: none; text-align: center;
+}
+#screen-motion-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: none; }
+
+.form-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+@media (max-width: 800px) { .form-grid { grid-template-columns: 1fr; } }
+label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+input[type="text"], input[type="number"], select, textarea {
+  padding: 7px 9px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font-family: inherit; font-size: 13px;
+}
+.toast {
+  position: fixed; right: 18px; bottom: 18px; z-index: 500;
+  background: #111827; color: #fff; padding: 10px 14px; border-radius: 8px;
+  font-size: 13px; font-weight: 600; display: none; box-shadow: 0 6px 18px rgba(0,0,0,0.3);
+}
+.print-only { display: none; }
+.log-box {
+  background: #0b1220; color: #d1fae5; font-family: Consolas, monospace; font-size: 12px;
+  padding: 10px; border-radius: 7px; max-height: 180px; overflow-y: auto; border: 1px solid var(--border);
+}
+
+@media print {
+  body { background: #fff !important; color: #000 !important; font-size: 11px; }
+  .topbar, .no-print, .step-pills, .step-panel, .step-footer, #screen-overlay { display: none !important; }
+  .print-only { display: block !important; }
+  .card, .kpi { box-shadow: none !important; break-inside: avoid; border: 1px solid #bbb !important; }
+  .container { max-width: 100%; padding: 0; }
+}
+</style>
+</head>
+<body>
+<div class="topbar no-print">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div>
+        <div class="brand-title">LaptopInspect &mdash; Pre-Purchase Audit Suite</div>
+        <div class="brand-sub" id="top-subtitle">Loading machine info...</div>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary btn-sm" onclick="scrollToWizard()">Start Guided Tests</button>
+      <button class="btn btn-pass btn-sm" id="btn-save-report" onclick="saveCompletedReport()">Save Completed Report</button>
+      <button class="btn btn-sm" onclick="window.print()">Print / Save PDF</button>
+      <button class="btn btn-sm" onclick="copyTextSummary()">Copy Text / WhatsApp</button>
+      <button class="btn btn-sm" onclick="exportTxtSummary()">Export .TXT</button>
+      <button class="btn btn-sm" onclick="exportJsonFile()">Export .JSON</button>
+      <button class="btn btn-sm" onclick="toggleTheme()">Theme</button>
+      <button class="btn btn-warn btn-sm" id="btn-shutdown-srv" style="display:none;" onclick="shutdownServer()">Finish &amp; Close Server</button>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="print-only" style="margin-bottom:10px; border-bottom:2px solid #000; padding-bottom:6px;">
+    <strong>LaptopInspect Pre-Purchase Diagnostic &amp; Corporate Lock Certificate</strong>
+    <div id="print-meta" style="font-size:11px; color:#333;"></div>
+  </div>
+
+  <!-- Executive KPI Row -->
+  <div class="verdict-banner">
+    <div class="kpi">
+      <div class="kpi-label">Overall Buyer Verdict</div>
+      <div class="kpi-val" id="kpi-verdict">--</div>
+      <div class="kpi-sub" id="kpi-verdict-sub">Evaluating...</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Corporate Lock Audit</div>
+      <div class="kpi-val" id="kpi-corplock">--</div>
+      <div class="kpi-sub" id="kpi-corplock-sub">--</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Hardware Health Score</div>
+      <div class="kpi-val" id="kpi-score">-- / 100</div>
+      <div class="kpi-sub" id="kpi-score-sub">--</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Guided Verification</div>
+      <div class="kpi-val" id="kpi-manual">0 / 10</div>
+      <div class="kpi-sub" id="kpi-manual-sub">Interactive buyer checks pending</div>
+    </div>
+  </div>
+
+  <div id="alerts-box"></div>
+
+  <!-- Section 1: Corporate Lock & Ownership Audit -->
+  <div class="card">
+    <h2>
+      <span>1. Corporate Lock &amp; Ownership Audit</span>
+      <span class="badge b-info" id="corp-admin-badge">Session</span>
+    </h2>
+    <div id="corp-advisory"></div>
+    <div class="grid-4" id="corp-grid"></div>
+  </div>
+
+  <!-- Section 2: Complete Automated Hardware Telemetry -->
+  <div class="card">
+    <h2><span>2. Automated Hardware &amp; Thermal Telemetry</span><span class="badge b-info" id="meta-duration"></span></h2>
+    <div class="grid-2">
+      <div>
+        <h3>System Identity</h3>
+        <table id="tbl-system"></table>
+        <h3>Battery &amp; Power Load Stability</h3>
+        <table id="tbl-battery"></table>
+        <h3>CPU, Verified Workload &amp; Thermals</h3>
+        <table id="tbl-cpu"></table>
+      </div>
+      <div>
+        <h3>Graphics Adapters (GPU)</h3>
+        <table id="tbl-gpu"></table>
+        <h3>Memory (RAM) &amp; Upgradeability</h3>
+        <table id="tbl-ram"></table>
+        <h3>Storage SMART &amp; Benchmark</h3>
+        <table id="tbl-storage"></table>
+      </div>
+    </div>
+    <div class="grid-2" style="margin-top:12px;">
+      <div>
+        <h3>Display (EDID) &amp; Built-in Peripherals</h3>
+        <table id="tbl-display-periph"></table>
+      </div>
+      <div>
+        <h3>Network, Wi-Fi &amp; Device Manager Errors</h3>
+        <table id="tbl-network-errors"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Printable Manual Summary Table -->
+  <div class="card print-only" id="print-manual-card">
+    <h2>Guided Buyer Inspection &amp; Cosmetic Summary</h2>
+    <table id="tbl-print-manual"></table>
+  </div>
+
+  <!-- Section 3: Guided 10-Step Interactive Verification Wizard -->
+  <div class="card no-print" id="wizard-card">
+    <h2>
+      <span>3. Guided 10-Step Buyer Verification Suite</span>
+      <span class="badge b-info" id="wizard-step-label">Step 1 of 10</span>
+    </h2>
+    <div class="step-pills" id="step-pills"></div>
+
+    <!-- Step 1: Keyboard -->
+    <div class="step-panel active" id="step-1">
+      <p><strong>Keyboard &amp; Backlight Test:</strong> Press every physical key on the laptop. Tested keys turn green; keys bouncing faster than 15ms highlight amber as chatter.</p>
+      <div class="btn-row" style="margin-bottom:8px;">
+        <span class="badge b-info" id="kb-count">0 keys pressed</span>
+        <span class="badge b-pass" id="kb-chatter">Chatter: 0</span>
+        <button class="btn btn-sm" onclick="resetKeyboard()">Reset Keyboard</button>
+        <label style="font-size:12px; margin-left:8px;">Backlight:
+          <select id="kb-backlight" onchange="updateField('kbBacklight', this.value)">
+            <option value="">Not Checked</option>
+            <option value="PASS">Working (Pass)</option>
+            <option value="FAIL">Dead / Flickering (Fail)</option>
+            <option value="NA">No Backlight (N/A)</option>
+          </select>
+        </label>
+      </div>
+      <div class="kb-wrap"><div class="kb-board" id="kb-board"></div></div>
+      <p style="font-size:12px; color:var(--muted);">Note: Hardware <code>Fn</code> and OS-reserved shortcuts (<code>Win+L</code>, <code>Ctrl+Alt+Del</code>, <code>PrtSc</code>) may be intercepted by Windows before reaching the browser.</p>
+    </div>
+
+    <!-- Step 2: Touchpad & Touchscreen -->
+    <div class="step-panel" id="step-2">
+      <p><strong>Touchpad, Clicks, Scroll &amp; Touchscreen:</strong> Move across the pad, draw while dragging, test Left/Right/Middle clicks and two-finger scroll.</p>
+      <div class="btn-row" style="margin-bottom:10px;">
+        <span class="badge b-unavail" id="tp-move">Move: Pending</span>
+        <span class="badge b-unavail" id="tp-left">Left Click: Pending</span>
+        <span class="badge b-unavail" id="tp-right">Right Click: Pending</span>
+        <span class="badge b-unavail" id="tp-middle">Middle Click: Pending</span>
+        <span class="badge b-unavail" id="tp-scroll">Scroll: Pending</span>
+        <span class="badge b-unavail" id="tp-drag">Drag: Pending</span>
+        <span class="badge b-unavail" id="tp-touch">Touch/Pen: Pending</span>
+        <button class="btn btn-sm" onclick="clearTouchpadCanvas()">Clear Canvas</button>
+      </div>
+      <canvas id="tp-canvas" class="test-canvas" width="820" height="320"></canvas>
+    </div>
+
+    <!-- Step 3: Screen & Display Quality -->
+    <div class="step-panel" id="step-3">
+      <p><strong>Screen &amp; Dead Pixel / Uniformity / Refresh Rate Test:</strong> Launch fullscreen mode and inspect for dead pixels, backlight bleed, yellowing, banding, or flicker. Click or press Space/Arrows to advance, Escape to exit.</p>
+      <div class="btn-row" style="margin-bottom:10px;">
+        <button class="btn btn-primary" onclick="startScreenTest(0)">Launch Fullscreen Cycle (10 Modes)</button>
+        <button class="btn btn-sm" onclick="startScreenTest(0)">Black (Bleed)</button>
+        <button class="btn btn-sm" onclick="startScreenTest(1)">White (Uniformity)</button>
+        <button class="btn btn-sm" onclick="startScreenTest(2)">Red</button>
+        <button class="btn btn-sm" onclick="startScreenTest(3)">Green</button>
+        <button class="btn btn-sm" onclick="startScreenTest(4)">Blue</button>
+        <button class="btn btn-sm" onclick="startScreenTest(5)">50% Gray</button>
+        <button class="btn btn-sm" onclick="startScreenTest(6)">Gradient</button>
+        <button class="btn btn-sm" onclick="startScreenTest(7)">Checkerboard</button>
+        <button class="btn btn-sm" onclick="startScreenTest(8)">Grid</button>
+        <button class="btn btn-sm" onclick="startScreenTest(9)">Motion / Hz (<span id="screen-hz-label">Measure</span>)</button>
+      </div>
+      <div id="screen-test-info" class="kpi-sub">Click any pattern above to inspect the full panel.</div>
+    </div>
+
+    <!-- Step 4: Speakers & Audio -->
+    <div class="step-panel" id="step-4">
+      <p><strong>Speakers &amp; Audio Channel Test:</strong> Verify left speaker, right speaker, stereo balance, and high-volume rattle sweep. Also plug in 3.5mm headphones if equipped.</p>
+      <div class="btn-row" style="margin-bottom:10px;">
+        <button class="btn btn-primary btn-sm" onclick="playTone('left')">Left Speaker Only</button>
+        <button class="btn btn-primary btn-sm" onclick="playTone('right')">Right Speaker Only</button>
+        <button class="btn btn-primary btn-sm" onclick="playTone('both')">Stereo Both</button>
+        <button class="btn btn-sm" onclick="playSweep()">Sweep 120Hz &rarr; 6000Hz (Rattle Check)</button>
+        <button class="btn btn-fail btn-sm" onclick="stopAudio()">Stop Sound</button>
+        <a class="btn btn-sm" href="ms-settings:sound">Open Windows Sound Settings</a>
+      </div>
+      <label style="font-size:13px;">Headphone 3.5mm Jack:
+        <select id="audio-jack" onchange="updateField('audioJack', this.value)">
+          <option value="">Not Tested</option>
+          <option value="PASS">Working (Pass)</option>
+          <option value="FAIL">No Sound / Static (Fail)</option>
+          <option value="NA">No Jack / Not Needed (N/A)</option>
+        </select>
+      </label>
+    </div>
+
+    <!-- Step 5: Webcam -->
+    <div class="step-panel" id="step-5">
+      <p><strong>Webcam Verification:</strong> Start camera to check focus, color, exposure, and privacy shutter. Stream stops automatically when leaving this step.</p>
+      <div class="btn-row" style="margin-bottom:10px;">
+        <button class="btn btn-primary btn-sm" onclick="startWebcam()">Start Webcam Preview</button>
+        <button class="btn btn-fail btn-sm" onclick="stopWebcam()">Stop Camera</button>
+        <span class="badge b-info" id="cam-res">Not Started</span>
+        <a class="btn btn-sm" href="ms-settings:privacy-webcam">Windows Camera Privacy</a>
+      </div>
+      <video id="cam-video" class="cam-preview" autoplay playsinline muted></video>
+      <div id="cam-msg" class="kpi-sub"></div>
+    </div>
+
+    <!-- Step 6: Microphone -->
+    <div class="step-panel" id="step-6">
+      <p><strong>Microphone Input &amp; Recording Test:</strong> Speak into the laptop microphone, check live level meter, and play back a 3-second sample. Recordings stay local and are never saved inside the HTML report.</p>
+      <div class="btn-row" style="margin-bottom:10px;">
+        <button class="btn btn-primary btn-sm" onclick="startMic()">Start Live Mic Monitor</button>
+        <button class="btn btn-warn btn-sm" onclick="recordMicSample()">Record 3s Sample</button>
+        <button class="btn btn-fail btn-sm" onclick="stopMic()">Stop Mic</button>
+        <button class="btn btn-sm" id="btn-dl-wav" style="display:none;" onclick="downloadLastWav()">Download .WAV</button>
+      </div>
+      <div class="meter-bar" style="margin-bottom:8px;"><div class="meter-fill" id="mic-meter"></div></div>
+      <canvas id="mic-canvas" class="test-canvas" style="height:120px; max-width:520px;" width="520" height="120"></canvas>
+      <div style="margin-top:8px;"><audio id="mic-playback" controls style="display:none; width:100%; max-width:520px;"></audio></div>
+      <div id="mic-msg" class="kpi-sub"></div>
+    </div>
+
+    <!-- Step 7: Ports, Charging & Wireless -->
+    <div class="step-panel" id="step-7">
+      <p><strong>Physical Ports, Charging &amp; Wireless Hot-Plug Test:</strong> Plug a USB stick, charger, HDMI/USB-C display, or Ethernet cable into each physical port to verify live OS detection.</p>
+      <div class="btn-row" style="margin-bottom:10px;">
+        <button class="btn btn-primary btn-sm" id="btn-port-watch" onclick="togglePortWatcher()">Start Live Port Watcher</button>
+        <a class="btn btn-sm" href="ms-settings:bluetooth">Bluetooth Settings</a>
+        <a class="btn btn-sm" href="ms-settings:network-wifi">Wi-Fi Settings</a>
+      </div>
+      <div id="port-watch-status" class="kpi-sub" style="margin-bottom:8px;"></div>
+      <div class="log-box" id="port-log">Waiting for port watcher...</div>
+      <div class="grid-3" style="margin-top:12px;">
+        <label><input type="checkbox" id="chk-usba" onchange="togglePortCheck('usba', this.checked)"> USB-A Ports Verified</label>
+        <label><input type="checkbox" id="chk-usbc" onchange="togglePortCheck('usbc', this.checked)"> USB-C / Thunderbolt Verified</label>
+        <label><input type="checkbox" id="chk-pd" onchange="togglePortCheck('pd', this.checked)"> AC / USB-C Charging Verified</label>
+        <label><input type="checkbox" id="chk-hdmi" onchange="togglePortCheck('hdmi', this.checked)"> HDMI / Display Output Verified</label>
+        <label><input type="checkbox" id="chk-eth" onchange="togglePortCheck('eth', this.checked)"> Ethernet / Card Reader Verified</label>
+        <label><input type="checkbox" id="chk-bt" onchange="togglePortCheck('bt', this.checked)"> Wi-Fi &amp; Bluetooth Paired</label>
+      </div>
+    </div>
+
+    <!-- Step 8: GPU 3D WebGL2 Stress -->
+    <div class="step-panel" id="step-8">
+      <p><strong>GPU 3D WebGL2 Stress &amp; Artifact Test:</strong> Exercises the GPU 3D pipeline to expose screen corruption, flickering triangles, driver crashes, or severe overheating.</p>
+      <div class="btn-row" style="margin-bottom:10px;">
+        <button class="btn btn-primary btn-sm" onclick="startGpuStress(30)">Start 30s 3D Stress</button>
+        <button class="btn btn-fail btn-sm" onclick="stopGpuStress()">Stop 3D Test</button>
+        <label style="font-size:12px;">Load:
+          <select id="gpu-load" onchange="setGpuLoad(this.value)">
+            <option value="300">Normal (300 objects)</option>
+            <option value="1500" selected>Heavy (1,500 objects)</option>
+            <option value="4000">Extreme (4,000 objects)</option>
+          </select>
+        </label>
+        <span class="badge b-info" id="gpu-fps">FPS: --</span>
+        <span class="badge b-info" id="gpu-ft">Frame: -- ms</span>
+        <span class="badge b-info" id="gpu-timer">Timer: 30s</span>
+      </div>
+      <div id="gpu-renderer" class="kpi-sub" style="margin-bottom:8px;">Renderer: Not started</div>
+      <canvas id="gpu-canvas" class="test-canvas" width="820" height="300"></canvas>
+    </div>
+
+    <!-- Step 9: BIOS / UEFI Manual Verification -->
+    <div class="step-panel" id="step-9">
+      <p><strong>BIOS / UEFI Setup Lock Check:</strong> If Vendor BIOS WMI was unavailable or you want 100% certainty, reboot and enter BIOS Setup (F1 / F2 / F10 / Del) to verify no hidden locks exist.</p>
+      <div id="bios-manual-summary" class="alert alert-info"></div>
+      <div class="grid-3">
+        <label><input type="checkbox" id="chk-bios-pwd" onchange="togglePortCheck('biosNoPwd', this.checked)"> Confirmed NO BIOS Supervisor / Admin Password</label>
+        <label><input type="checkbox" id="chk-bios-comp" onchange="togglePortCheck('biosNoComputrace', this.checked)"> Confirmed Computrace / Absolute Disabled</label>
+        <label><input type="checkbox" id="chk-bios-oobe" onchange="togglePortCheck('oobeChecked', this.checked)"> Confirmed Clean Online Windows OOBE (No Org Login)</label>
+      </div>
+    </div>
+
+    <!-- Step 10: Cosmetic Grade & Purchase Info -->
+    <div class="step-panel" id="step-10">
+      <p><strong>Cosmetic Condition &amp; Purchase Details:</strong> Record physical condition, charger originality, seller info, and notes before saving the final Purchase Certificate.</p>
+      <div class="form-grid">
+        <label class="field">Chassis Grade
+          <select id="grade-chassis" onchange="updateField('chassisGrade', this.value)">
+            <option value="">Select...</option>
+            <option value="A+ (Mint)">A+ (Mint)</option>
+            <option value="A (Light Wear)">A (Light Wear)</option>
+            <option value="B (Visible Scratches)">B (Visible Scratches)</option>
+            <option value="C (Dents / Cracks)">C (Dents / Cracks)</option>
+          </select>
+        </label>
+        <label class="field">Screen Glass Condition
+          <select id="grade-screen" onchange="updateField('screenGrade', this.value)">
+            <option value="">Select...</option>
+            <option value="Clean / Spotless">Clean / Spotless</option>
+            <option value="Light Keyboard Imprints">Light Keyboard Imprints</option>
+            <option value="Scratches / White Pressure Spots">Scratches / White Pressure Spots</option>
+            <option value="Cracked / Delaminating">Cracked / Delaminating</option>
+          </select>
+        </label>
+        <label class="field">Hinges &amp; Lid Stability
+          <select id="grade-hinges" onchange="updateField('hingesGrade', this.value)">
+            <option value="">Select...</option>
+            <option value="Tight &amp; Smooth">Tight &amp; Smooth</option>
+            <option value="Slightly Loose">Slightly Loose</option>
+            <option value="Damaged / Wobbling">Damaged / Wobbling</option>
+          </select>
+        </label>
+        <label class="field">Charger Included
+          <select id="grade-charger" onchange="updateField('chargerType', this.value)">
+            <option value="">Select...</option>
+            <option value="Original OEM">Original OEM</option>
+            <option value="Third-Party">Third-Party</option>
+            <option value="None Included">None Included</option>
+          </select>
+        </label>
+        <label class="field">Seller Name / Shop
+          <input type="text" id="meta-seller" placeholder="e.g. TechResale" oninput="updateField('sellerName', this.value)">
+        </label>
+        <label class="field">Asking Price
+          <input type="text" id="meta-price" placeholder="e.g. $450 / 85,000 DZD" oninput="updateField('askingPrice', this.value)">
+        </label>
+      </div>
+      <label class="field" style="margin-top:10px;">Buyer Inspection Notes
+        <textarea id="meta-notes" rows="3" placeholder="Any cosmetic scuffs, missing screws, battery notes, or agreed warranty..." oninput="updateField('notes', this.value)"></textarea>
+      </label>
+      <p style="font-size:12px; color:var(--muted); margin-top:10px;">Diagnostic Scope Disclaimer: Hardware metrics and short load checks reflect observed state at test time and do not guarantee long-term component lifespan.</p>
+    </div>
+
+    <div class="step-footer">
+      <div class="btn-row">
+        <button class="btn btn-sm" onclick="prevStep()">&larr; Previous</button>
+        <button class="btn btn-sm" onclick="nextStep()">Next &rarr;</button>
+      </div>
+      <div class="btn-row" id="step-rating-bar">
+        <span style="font-size:12px; color:var(--muted);">Mark this step:</span>
+        <button class="btn btn-pass btn-sm" onclick="setStepResult('PASS')">PASS</button>
+        <button class="btn btn-fail btn-sm" onclick="setStepResult('FAIL')">FAIL</button>
+        <button class="btn btn-sm" onclick="setStepResult('NA')">N/A</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Fullscreen Screen Inspection Overlay -->
+<div id="screen-overlay" onclick="nextScreenMode()">
+  <canvas id="screen-motion-canvas"></canvas>
+  <div id="screen-hud">Mode</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script id="li-report-data" type="application/json">__LI_REPORT_DATA_JSON__</script>
+<script id="li-manual-state" type="application/json">__LI_MANUAL_STATE_JSON__</script>
+<script>window.__LI_SERVER__ = __LI_SERVER_FLAG__;</script>
+<script>
+(function () {
+  'use strict';
+
+  function toArr(v) {
+    if (v === null || v === undefined) return [];
+    return Array.isArray(v) ? v : [v];
+  }
+
+  function esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function parseJsonBlock(id) {
+    try {
+      var el = document.getElementById(id);
+      if (!el || !el.textContent) return {};
+      return JSON.parse(el.textContent);
+    } catch (e) {
+      return {};
+    }
+  }
+
+  var reportData = parseJsonBlock('li-report-data');
+  var rawManual = parseJsonBlock('li-manual-state');
+  var manualState = Object.assign({
+    results: {},
+    checks: {},
+    kbTestedCount: 0,
+    kbChatterCount: 0,
+    kbBacklight: '',
+    audioJack: '',
+    chassisGrade: '',
+    screenGrade: '',
+    hingesGrade: '',
+    chargerType: '',
+    sellerName: '',
+    askingPrice: '',
+    notes: ''
+  }, rawManual || {});
+  if (!manualState.results) manualState.results = {};
+  if (!manualState.checks) manualState.checks = {};
+
+  var STEPS = [
+    { id: 'keyboard', label: '1. Keyboard' },
+    { id: 'touchpad', label: '2. Touchpad' },
+    { id: 'screen',   label: '3. Screen' },
+    { id: 'speakers', label: '4. Speakers' },
+    { id: 'webcam',   label: '5. Webcam' },
+    { id: 'mic',      label: '6. Microphone' },
+    { id: 'ports',    label: '7. Ports & Wi-Fi' },
+    { id: 'gpu3d',    label: '8. GPU 3D' },
+    { id: 'bios',     label: '9. BIOS Lock' },
+    { id: 'cosmetic', label: '10. Grade & Info' }
+  ];
+  var currentStepIdx = 0;
+
+  function showToast(msg) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.style.display = 'block';
+    clearTimeout(t._timer);
+    t._timer = setTimeout(function () { t.style.display = 'none'; }, 3500);
+  }
+
+  function badgeHtml(status, customLabel) {
+    var s = String(status || 'UNAVAILABLE').toUpperCase();
+    var cls = 'b-unavail';
+    if (s === 'PASS' || s === 'BUY' || s === 'CLEAN' || s === 'OK' || s === 'HEALTHY') cls = 'b-pass';
+    else if (s === 'WARN' || s === 'CAUTION' || s === 'NA') cls = 'b-warn';
+    else if (s === 'FAIL' || s === 'DO NOT BUY' || s === 'LOCKED') cls = 'b-fail';
+    return '<span class="badge ' + cls + '">' + esc(customLabel || s) + '</span>';
+  }
+
+  function kvRow(k, v) {
+    return '<tr><th style="width:38%;">' + esc(k) + '</th><td>' + v + '</td></tr>';
+  }
+
+  function computeLiveVerdict() {
+    var auto = reportData.Scoring || {};
+    var crit = toArr(auto.CriticalFlags).slice();
+    var warns = toArr(auto.Warnings).slice();
+    var adv = toArr(auto.Advisories).slice();
+    var score = (typeof auto.Score === 'number') ? auto.Score : 100;
+
+    for (var i = 0; i < STEPS.length; i++) {
+      var st = STEPS[i];
+      var r = manualState.results[st.id];
+      if (r === 'FAIL') {
+        crit.push('Manual Test FAILED: ' + st.label);
+        score = Math.max(0, score - 20);
+      }
+    }
+    if (manualState.kbBacklight === 'FAIL') warns.push('Keyboard backlight failed manual check');
+    if (manualState.audioJack === 'FAIL') warns.push('3.5mm audio jack failed manual check');
+
+    var verdict = 'BUY';
+    if (crit.length > 0) verdict = 'DO NOT BUY';
+    else if (warns.length > 0 || score < 80) verdict = 'CAUTION';
+
+    return { verdict: verdict, score: score, crit: crit, warns: warns, adv: adv };
+  }
+
+  function renderTopAndScoring() {
+    var sys = reportData.System || {};
+    var meta = reportData.Meta || {};
+    var corp = reportData.CorporateLock || {};
+    var live = computeLiveVerdict();
+
+    document.getElementById('top-subtitle').textContent =
+      (sys.Manufacturer || '') + ' ' + (sys.Model || 'Laptop') + ' | S/N: ' + (sys.SerialNumber || 'Unknown') + ' | Generated ' + (meta.GeneratedAt || '');
+    document.getElementById('print-meta').textContent =
+      (sys.Manufacturer || '') + ' ' + (sys.Model || '') + ' | Serial: ' + (sys.SerialNumber || '') + ' | Run: ' + (meta.GeneratedAt || '');
+    document.getElementById('meta-duration').textContent = 'Scan: ' + (meta.DurationSeconds || 0) + 's';
+
+    var kv = document.getElementById('kpi-verdict');
+    kv.innerHTML = badgeHtml(live.verdict, live.verdict === 'BUY' ? 'APPROVED TO BUY' : (live.verdict === 'CAUTION' ? 'BUY WITH CAUTION' : 'DO NOT BUY'));
+    document.getElementById('kpi-verdict-sub').textContent =
+      live.crit.length + ' critical flag(s), ' + live.warns.length + ' warning(s)';
+
+    var kcl = document.getElementById('kpi-corplock');
+    kcl.innerHTML = corp.ConfirmedCorporateLock ? badgeHtml('FAIL', 'LOCKED / MANAGED') : badgeHtml('PASS', 'NO LOCAL LOCK');
+    var biosStat = (corp.BiosSecurity && corp.BiosSecurity.WmiChecked) ? ('BIOS WMI: ' + corp.BiosSecurity.VendorProvider) : 'BIOS WMI unavailable (check UEFI manually)';
+    document.getElementById('kpi-corplock-sub').textContent = biosStat;
+
+    document.getElementById('kpi-score').textContent = live.score + ' / 100';
+    var deds = toArr((reportData.Scoring || {}).Deductions);
+    document.getElementById('kpi-score-sub').textContent = deds.length ? deds.join(' | ') : 'No automated deductions';
+
+    var doneCount = 0;
+    for (var i = 0; i < STEPS.length; i++) {
+      if (manualState.results[STEPS[i].id]) doneCount++;
+    }
+    document.getElementById('kpi-manual').textContent = doneCount + ' / ' + STEPS.length;
+    document.getElementById('kpi-manual-sub').textContent = doneCount === STEPS.length ? 'All guided steps recorded' : 'Complete steps below and click Save';
+
+    var ab = document.getElementById('alerts-box');
+    var html = '';
+    if (live.crit.length > 0) {
+      html += '<div class="alert alert-fail"><strong>CRITICAL REASONS TO REJECT:</strong><ul>' +
+        live.crit.map(function (c) { return '<li>' + esc(c) + '</li>'; }).join('') + '</ul></div>';
+    }
+    if (live.warns.length > 0) {
+      html += '<div class="alert alert-warn"><strong>WARNINGS / NEGOTIATION POINTS:</strong><ul>' +
+        live.warns.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul></div>';
+    }
+    ab.innerHTML = html;
+
+    renderPrintManualSummary(live);
+  }
+
+  function renderCorporateLock() {
+    var c = reportData.CorporateLock || {};
+    var adminBadge = document.getElementById('corp-admin-badge');
+    adminBadge.className = 'badge ' + (c.IsAdminSession ? 'b-pass' : 'b-warn');
+    adminBadge.textContent = c.IsAdminSession ? 'Administrator Telemetry' : 'Standard User (Limited WMI)';
+
+    var advHtml = '';
+    if (c.Autopilot && c.Autopilot.Advisory) {
+      advHtml = '<div class="alert alert-info"><strong>Buyer Verification Note:</strong> ' + esc(c.Autopilot.Advisory) + '</div>';
+    }
+    document.getElementById('corp-advisory').innerHTML = advHtml;
+
+    var ds = c.Dsreg || {};
+    var ap = c.Autopilot || {};
+    var mdm = c.Mdm || {};
+    var comp = c.Computrace || {};
+    var bios = c.BiosSecurity || {};
+    var bl = c.BitLocker || {};
+    var rmm = c.RmmEdr || {};
+    var act = c.Activation || {};
+
+    var tiles = [
+      {
+        title: 'Windows Autopilot',
+        status: ap.Status,
+        detail: ap.Assigned
+          ? ('Assigned Tenant: ' + (ap.TenantDomain || ap.TenantId || 'Detected') + '. ' + toArr(ap.Evidence).join('; '))
+          : ('No local Autopilot profile. HW Hash: ' + (ap.HardwareHashSummary || 'N/A'))
+      },
+      {
+        title: 'Entra ID / AD Domain',
+        status: c.DomainJoinStatus,
+        detail: ds.Available
+          ? ('AzureAD=' + ds.AzureAdJoined + ', Domain=' + ds.DomainJoined + ', Enterprise=' + ds.EnterpriseJoined + ', Workplace=' + ds.WorkplaceJoined + (ds.TenantName ? ' (' + ds.TenantName + ')' : ''))
+          : 'dsregcmd unavailable'
+      },
+      {
+        title: 'Intune / MDM Enrollment',
+        status: mdm.Status,
+        detail: mdm.Detected
+          ? ('Active enrollment(s): ' + toArr(mdm.Entries).map(function (e) { return e.ProviderID || e.UPN || e.EnrollmentId; }).join(', ') + ' PPKG=' + toArr(mdm.PpkgFiles).length)
+          : 'No active MDM enrollments or provisioning packages found'
+      },
+      {
+        title: 'Computrace / Absolute',
+        status: comp.Status,
+        detail: comp.OsEvidence && toArr(comp.OsEvidence).length
+          ? toArr(comp.OsEvidence).join('; ')
+          : (comp.BiosWmiChecked ? ('BIOS WMI checked (' + comp.BiosVendor + '): not active') : 'No OS agent found; vendor BIOS WMI unavailable - verify in UEFI Setup')
+      },
+      {
+        title: 'BIOS Password & vPro',
+        status: bios.Status,
+        detail: (bios.WmiChecked ? ('Provider: ' + bios.VendorProvider + '; PasswordSet=' + bios.PasswordSet) : 'Vendor BIOS WMI unavailable - verify in UEFI Setup') +
+          ' | SecureBoot=' + (bios.SecureBoot || 'UNAVAILABLE') +
+          ' | TPM=' + (bios.Tpm && bios.Tpm.Available ? ('Present=' + bios.Tpm.TpmPresent + ',Ready=' + bios.Tpm.TpmReady) : 'UNAVAILABLE') +
+          (bios.IntelAmtActive ? ' | Intel AMT/vPro Present' : '')
+      },
+      {
+        title: 'BitLocker Encryption',
+        status: bl.Status,
+        detail: bl.Checked
+          ? (toArr(bl.Volumes).map(function (v) { return (v.MountPoint || 'Vol') + ': ' + v.ProtectionStatus; }).join(', ') || 'No protected volumes')
+          : 'BitLocker check unavailable (Admin required or Home edition)'
+      },
+      {
+        title: 'Corporate RMM / EDR',
+        status: rmm.Status,
+        detail: rmm.Detected ? toArr(rmm.Findings).join('; ') : 'No known corporate RMM or enterprise EDR agents running'
+      },
+      {
+        title: 'Windows OEM License',
+        status: act.Status,
+        detail: 'Status=' + (act.LicenseStatus || 'Unknown') + ' | Channel=' + (act.Channel || 'Unknown') +
+          ' | BIOS OEM Key=' + (act.HasOemFirmwareKey ? ('Yes (' + act.MaskedOemKey + ')') : 'Not Found')
+      }
+    ];
+
+    document.getElementById('corp-grid').innerHTML = tiles.map(function (t) {
+      return '<div class="lock-tile"><div class="lock-tile-top"><span>' + esc(t.title) + '</span>' + badgeHtml(t.status) +
+        '</div><div class="lock-tile-detail">' + esc(t.detail) + '</div></div>';
+    }).join('');
+  }
+
+  function renderTelemetryTables() {
+    var sys = reportData.System || {};
+    document.getElementById('tbl-system').innerHTML =
+      kvRow('Model / SKU', esc((sys.Manufacturer || '') + ' ' + (sys.Model || '') + (sys.SystemSku ? ' [' + sys.SystemSku + ']' : ''))) +
+      kvRow('Serial Number', '<code>' + esc(sys.SerialNumber || 'Unknown') + '</code>') +
+      kvRow('BIOS / Board', esc((sys.BiosVendor || '') + ' ' + (sys.BiosVersion || '') + ' (' + (sys.BiosDate || '') + ') | ' + (sys.BaseBoard || ''))) +
+      kvRow('OS / Uptime', esc((sys.OsCaption || '') + ' Build ' + (sys.OsBuild || '') + ' | Installed: ' + (sys.OsInstallDate || 'N/A') + ' | Uptime: ' + (sys.UptimeHours !== null && sys.UptimeHours !== undefined ? sys.UptimeHours + 'h' : 'N/A')));
+
+    var bat = reportData.Battery || {};
+    var batRows = kvRow('Status / Condition', badgeHtml(bat.Status) + ' ' + esc(bat.Condition || '')) +
+      kvRow('Health / Cycles', (bat.OverallHealthPercent !== null && bat.OverallHealthPercent !== undefined ? '<strong>' + bat.OverallHealthPercent + '%</strong>' : 'UNAVAILABLE') + ' | Max Cycles: ' + esc(bat.MaxCycleCount !== null && bat.MaxCycleCount !== undefined ? bat.MaxCycleCount : 'N/A')) +
+      kvRow('Live Power', 'Charge: ' + esc(bat.CurrentChargePercent !== null && bat.CurrentChargePercent !== undefined ? bat.CurrentChargePercent + '%' : 'N/A') +
+        ' | AC Online: ' + esc(bat.AcOnline) + ' | Voltage: ' + esc(bat.VoltageMv ? bat.VoltageMv + ' mV' : 'N/A')) +
+      kvRow('AC Load Stability', (bat.AcFlickerDetected || bat.VoltageDroopDetected)
+        ? badgeHtml('WARN', 'Flicker/Droop Detected (' + bat.VoltageDroopPct + '%)')
+        : badgeHtml('PASS', 'Stable (Droop ' + (bat.VoltageDroopPct || 0) + '%)'));
+    toArr(bat.Batteries).forEach(function (b, idx) {
+      batRows += kvRow('Battery #' + (idx + 1), esc((b.Manufacturer || '') + ' ' + (b.Id || '') + ' | Design: ' + b.DesignCapacityMWh + ' mWh | Full: ' + b.FullChargeMWh + ' mWh (' + (b.HealthPercent || '?') + '%) | Cycles: ' + (b.CycleCount !== null && b.CycleCount !== undefined ? b.CycleCount : 'N/A')));
+    });
+    document.getElementById('tbl-battery').innerHTML = batRows;
+
+    var cpu = reportData.Cpu || {};
+    document.getElementById('tbl-cpu').innerHTML =
+      kvRow('Processor', esc((cpu.CpuName || '') + ' (' + cpu.PhysicalCores + 'C / ' + cpu.LogicalProcessors + 'T @ ' + cpu.MaxClockMHz + ' MHz)')) +
+      kvRow('Verified Workload', cpu.StressSkipped
+        ? badgeHtml('UNAVAILABLE', 'Skipped')
+        : (badgeHtml(cpu.VerificationPassed ? 'PASS' : 'FAIL', cpu.VerificationPassed ? 'Int+FP Checksum PASS' : 'Checksum FAIL') +
+          ' Int: ' + esc(cpu.IntOpsPerSec) + '/s | FP: ' + esc(cpu.FpOpsPerSec) + '/s')) +
+      kvRow('Thermals', badgeHtml(cpu.ThermalStatus) + ' Idle: ' + (cpu.IdleTempC !== null && cpu.IdleTempC !== undefined ? cpu.IdleTempC + ' &deg;C' : 'N/A') +
+        ' | Peak: ' + (cpu.PeakTempC !== null && cpu.PeakTempC !== undefined ? cpu.PeakTempC + ' &deg;C' : 'UNAVAILABLE') +
+        (cpu.PeakGpuTempC !== null && cpu.PeakGpuTempC !== undefined ? ' | dGPU Peak: ' + cpu.PeakGpuTempC + ' &deg;C' : ''));
+
+    var gpu = reportData.Gpu || {};
+    var gpuRows = '';
+    toArr(gpu.Gpus).forEach(function (g, idx) {
+      gpuRows += kvRow('GPU #' + (idx + 1) + ' (' + (g.Type || '') + ')',
+        '<strong>' + esc(g.Name) + '</strong> | VRAM: ' + esc(g.VramGB) + ' GB (' + esc(g.VramMB) + ' MB) | Driver: ' + esc(g.DriverVersion) +
+        ' | ' + badgeHtml(g.ErrorCode === 0 ? 'PASS' : 'FAIL', 'ErrCode=' + g.ErrorCode));
+    });
+    toArr(gpu.NvidiaTelemetry).forEach(function (nv) {
+      gpuRows += kvRow('NVIDIA Telemetry', esc(nv.Name + ' | VBIOS ' + nv.VbiosVersion + ' | Temp ' + nv.TempC + ' C | Power ' + nv.PowerDrawW + '/' + nv.PowerLimitW + 'W | PCIe Gen' + nv.PcieGen + ' x' + nv.PcieWidth));
+    });
+    document.getElementById('tbl-gpu').innerHTML = gpuRows || kvRow('GPU', 'None detected');
+
+    var ram = reportData.Ram || {};
+    var ramRows = kvRow('Capacity & Slots', '<strong>' + esc(ram.TotalGB) + ' GB</strong> | Used ' + esc(ram.UsedSlots) + ' / ' + esc(ram.TotalSlots) + ' slots | Free: ' + esc(ram.FreeSlots) + (ram.SolderedDetected ? ' (Soldered/LPDDR)' : '')) +
+      kvRow('Pattern Check (128MB)', badgeHtml((ram.PatternTest || {}).Status) + ' ' + esc((ram.PatternTest || {}).Detail || ''));
+    toArr(ram.Dimms).forEach(function (d, idx) {
+      ramRows += kvRow('DIMM #' + (idx + 1), esc(d.CapacityGB + ' GB ' + d.MemoryType + ' @ ' + (d.ConfiguredClockMTs || d.SpeedMTs) + ' MT/s | ' + d.FormFactor + ' | ' + d.Manufacturer + ' ' + d.PartNumber));
+    });
+    document.getElementById('tbl-ram').innerHTML = ramRows;
+
+    var stor = reportData.Storage || {};
+    var storRows = kvRow('Storage Status', badgeHtml(stor.Status) + (stor.Benchmark && stor.Benchmark.SeqReadMBs ? (' | Seq Read: <strong>' + stor.Benchmark.SeqReadMBs + ' MB/s</strong>, Write: <strong>' + stor.Benchmark.SeqWriteMBs + ' MB/s</strong>') : (' | ' + esc((stor.Benchmark || {}).Note || ''))));
+    toArr(stor.Disks).forEach(function (dk) {
+      var wearStr = (dk.WearPercent !== null && dk.WearPercent !== undefined) ? (dk.WearPercent + '% wear') : 'Wear N/A';
+      var tempStr = (dk.TemperatureC !== null && dk.TemperatureC !== undefined) ? (dk.TemperatureC + ' &deg;C') : 'Temp N/A';
+      var pohStr = (dk.PowerOnHours !== null && dk.PowerOnHours !== undefined) ? (dk.PowerOnHours + ' hrs') : 'POH N/A';
+      storRows += kvRow((dk.IsExternal ? 'External (' + dk.BusType + ')' : 'Internal (' + dk.BusType + ')'),
+        esc(dk.FriendlyName + ' (' + dk.SizeGB + ' GB) | ') + badgeHtml(dk.HealthStatus === 'Healthy' ? 'PASS' : 'FAIL', dk.HealthStatus) + ' | ' + wearStr + ' | ' + tempStr + ' | ' + esc(pohStr));
+    });
+    document.getElementById('tbl-storage').innerHTML = storRows;
+
+    var per = reportData.Peripherals || {};
+    var disp = per.Display || {};
+    var dRows = '';
+    toArr(disp.Panels).forEach(function (p, i) {
+      dRows += kvRow('Panel #' + (i + 1), esc((p.Manufacturer || '') + ' ' + (p.Model || '') + ' | ' + (p.DiagonalIn ? p.DiagonalIn + ' in' : '') + ' | ' + (p.Resolution || disp.PrimaryRes) + ' @ ' + (p.RefreshRateHz || disp.PrimaryHz) + ' Hz | Mfg ' + (p.Year || '?') + '-W' + (p.Week || '?')));
+    });
+    dRows += kvRow('Touchscreen', disp.Touchscreen ? 'Detected' : 'Not Detected');
+    dRows += kvRow('Cameras / Hello IR', toArr(per.Cameras).map(function (cm) { return esc(cm.Name + ' [' + cm.Status + ']'); }).join('<br>') || 'None detected');
+    dRows += kvRow('Fingerprint / Biometrics', toArr(per.Biometrics).map(function (b) { return esc(b.Name + ' [' + b.Status + ']'); }).join('<br>') || 'None detected');
+    dRows += kvRow('Audio Devices', toArr(per.AudioDevices).map(function (a) { return esc(a.Name + ' [' + a.Status + ']'); }).join('<br>') || 'None');
+    dRows += kvRow('Port Controllers', toArr(per.Ports).map(esc).join(', ') || 'Standard USB');
+    document.getElementById('tbl-display-periph').innerHTML = dRows;
+
+    var net = per.Network || {};
+    var nRows = kvRow('Wi-Fi Capability', esc((net.WifiGeneration || 'Unknown') + (net.WifiSsid ? (' | SSID: ' + net.WifiSsid + ' (' + net.WifiSignalPct + '%)') : ' | Not connected'))) +
+      kvRow('Local Gateway Ping', net.GatewayIp
+        ? (esc(net.GatewayIp) + ' -> ' + (net.GatewayReachable ? badgeHtml('PASS', 'Reachable (' + net.GatewayLatencyMs + ' ms)') : badgeHtml('WARN', 'Unreachable')))
+        : 'No default gateway') +
+      kvRow('Bluetooth', toArr(per.Bluetooth).map(function (bt) { return esc(bt.Name + ' [' + bt.Status + ']'); }).join(', ') || 'None detected');
+
+    var errs = toArr(per.DeviceErrors);
+    nRows += kvRow('Device Manager Errors', errs.length === 0
+      ? badgeHtml('PASS', '0 Errors')
+      : (badgeHtml('WARN', errs.length + ' Issue(s)') + '<br>' + errs.map(function (e) { return esc(e.Name + ' (Code ' + e.ErrorCode + ': ' + e.Description + ')'); }).join('<br>')));
+    document.getElementById('tbl-network-errors').innerHTML = nRows;
+
+    var bios = (reportData.CorporateLock || {}).BiosSecurity || {};
+    document.getElementById('bios-manual-summary').innerHTML = bios.WmiChecked
+      ? ('Vendor BIOS WMI checked via <strong>' + esc(bios.VendorProvider) + '</strong>. PasswordSet=' + esc(bios.PasswordSet) + '. Details: ' + esc(toArr(((reportData.CorporateLock || {}).Computrace || {}).BiosSettings).join(' | ')))
+      : 'Vendor BIOS WMI is <strong>UNAVAILABLE</strong> on this system. Please reboot and enter BIOS/UEFI Setup manually to verify Supervisor Password and Computrace status.';
+  }
+
+  function renderWizardPills() {
+    var box = document.getElementById('step-pills');
+    box.innerHTML = STEPS.map(function (st, idx) {
+      var res = manualState.results[st.id];
+      var dotCls = res === 'PASS' ? 'pass' : (res === 'FAIL' ? 'fail' : (res === 'NA' ? 'na' : ''));
+      return '<button class="step-pill ' + (idx === currentStepIdx ? 'active' : '') + '" onclick="goToStep(' + idx + ')">' +
+        '<span class="dot ' + dotCls + '"></span>' + esc(st.label) + '</button>';
+    }).join('');
+    document.getElementById('wizard-step-label').textContent = 'Step ' + (currentStepIdx + 1) + ' of ' + STEPS.length;
+  }
+
+  function cleanupActiveStepMedia(leavingIdx) {
+    if (leavingIdx === 3) stopAudio();
+    if (leavingIdx === 4) stopWebcam();
+    if (leavingIdx === 5) stopMic();
+    if (leavingIdx === 6) stopPortWatcher();
+    if (leavingIdx === 7) stopGpuStress();
+  }
+
+  window.goToStep = function (idx) {
+    if (idx < 0 || idx >= STEPS.length) return;
+    if (idx !== currentStepIdx) {
+      cleanupActiveStepMedia(currentStepIdx);
+    }
+    var panels = document.querySelectorAll('.step-panel');
+    for (var i = 0; i < panels.length; i++) panels[i].classList.remove('active');
+    currentStepIdx = idx;
+    document.getElementById('step-' + (idx + 1)).classList.add('active');
+    renderWizardPills();
+    if (idx === 6 && window.__LI_SERVER__ === true) {
+      startPortWatcher();
+    }
+  };
+  window.nextStep = function () { window.goToStep((currentStepIdx + 1) % STEPS.length); };
+  window.prevStep = function () { window.goToStep((currentStepIdx - 1 + STEPS.length) % STEPS.length); };
+  window.scrollToWizard = function () { document.getElementById('wizard-card').scrollIntoView({ behavior: 'smooth' }); };
+
+  window.setStepResult = function (val) {
+    var st = STEPS[currentStepIdx];
+    manualState.results[st.id] = val;
+    renderWizardPills();
+    renderTopAndScoring();
+    showToast(st.label + ' marked ' + val);
+  };
+
+  window.updateField = function (k, v) {
+    manualState[k] = v;
+    renderTopAndScoring();
+  };
+
+  window.togglePortCheck = function (k, checked) {
+    manualState.checks[k] = !!checked;
+    renderPrintManualSummary(computeLiveVerdict());
+  };
+
+  function renderPrintManualSummary(live) {
+    var rows = '';
+    STEPS.forEach(function (st) {
+      var r = manualState.results[st.id] || 'Pending';
+      rows += kvRow(st.label, badgeHtml(r === 'PASS' ? 'PASS' : (r === 'FAIL' ? 'FAIL' : (r === 'NA' ? 'WARN' : 'UNAVAILABLE')), r));
+    });
+    rows += kvRow('Cosmetic Grade', esc('Chassis: ' + (manualState.chassisGrade || '-') + ' | Screen: ' + (manualState.screenGrade || '-') + ' | Hinges: ' + (manualState.hingesGrade || '-') + ' | Charger: ' + (manualState.chargerType || '-')));
+    rows += kvRow('Seller / Price / Notes', esc('Seller: ' + (manualState.sellerName || '-') + ' | Price: ' + (manualState.askingPrice || '-') + ' | Notes: ' + (manualState.notes || '-')));
+    rows += kvRow('Final Combined Verdict', badgeHtml(live.verdict) + ' (' + live.score + '/100)');
+    document.getElementById('tbl-print-manual').innerHTML = rows;
+  }
+
+  function restoreManualInputs() {
+    if (manualState.kbBacklight) document.getElementById('kb-backlight').value = manualState.kbBacklight;
+    if (manualState.audioJack) document.getElementById('audio-jack').value = manualState.audioJack;
+    if (manualState.chassisGrade) document.getElementById('grade-chassis').value = manualState.chassisGrade;
+    if (manualState.screenGrade) document.getElementById('grade-screen').value = manualState.screenGrade;
+    if (manualState.hingesGrade) document.getElementById('grade-hinges').value = manualState.hingesGrade;
+    if (manualState.chargerType) document.getElementById('grade-charger').value = manualState.chargerType;
+    if (manualState.sellerName) document.getElementById('meta-seller').value = manualState.sellerName;
+    if (manualState.askingPrice) document.getElementById('meta-price').value = manualState.askingPrice;
+    if (manualState.notes) document.getElementById('meta-notes').value = manualState.notes;
+
+    var cMap = {
+      usba: 'chk-usba', usbc: 'chk-usbc', pd: 'chk-pd', hdmi: 'chk-hdmi', eth: 'chk-eth', bt: 'chk-bt',
+      biosNoPwd: 'chk-bios-pwd', biosNoComputrace: 'chk-bios-comp', oobeChecked: 'chk-bios-oobe'
+    };
+    Object.keys(cMap).forEach(function (k) {
+      var el = document.getElementById(cMap[k]);
+      if (el && manualState.checks[k]) el.checked = true;
+    });
+  }
+
+  // ---- Step 1: Keyboard Matrix ----
+  var KB_MAIN = [
+    [['Escape','Esc'],['gap',''],['F1','F1'],['F2','F2'],['F3','F3'],['F4','F4'],['gap',''],['F5','F5'],['F6','F6'],['F7','F7'],['F8','F8'],['gap',''],['F9','F9'],['F10','F10'],['F11','F11'],['F12','F12']],
+    [['Backquote','`'],['Digit1','1'],['Digit2','2'],['Digit3','3'],['Digit4','4'],['Digit5','5'],['Digit6','6'],['Digit7','7'],['Digit8','8'],['Digit9','9'],['Digit0','0'],['Minus','-'],['Equal','='],['Backspace','Back','w2']],
+    [['Tab','Tab','w15'],['KeyQ','Q'],['KeyW','W'],['KeyE','E'],['KeyR','R'],['KeyT','T'],['KeyY','Y'],['KeyU','U'],['KeyI','I'],['KeyO','O'],['KeyP','P'],['BracketLeft','['],['BracketRight',']'],['Backslash','\\','w15']],
+    [['CapsLock','Caps','w175'],['KeyA','A'],['KeyS','S'],['KeyD','D'],['KeyF','F'],['KeyG','G'],['KeyH','H'],['KeyJ','J'],['KeyK','K'],['KeyL','L'],['Semicolon',';'],['Quote',"'"],['Enter','Enter','w225']],
+    [['ShiftLeft','Shift','w225'],['KeyZ','Z'],['KeyX','X'],['KeyC','C'],['KeyV','V'],['KeyB','B'],['KeyN','N'],['KeyM','M'],['Comma',','],['Period','.'],['Slash','/'],['ShiftRight','Shift','w225']],
+    [['ControlLeft','Ctrl','w15'],['MetaLeft','Win'],['AltLeft','Alt'],['Space','Space','w6'],['AltRight','Alt'],['ContextMenu','Menu'],['ControlRight','Ctrl','w15']]
+  ];
+  var KB_NAV = [
+    [['PrintScreen','PrtSc'],['ScrollLock','ScrLk'],['Pause','Pause']],
+    [['Insert','Ins'],['Home','Home'],['PageUp','PgUp']],
+    [['Delete','Del'],['End','End'],['PageDown','PgDn']],
+    [['gap',''],['gap',''],['gap','']],
+    [['gap',''],['ArrowUp','Up'],['gap','']],
+    [['ArrowLeft','Left'],['ArrowDown','Dn'],['ArrowRight','Right']]
+  ];
+  var KB_NUM = [
+    [['gap',''],['gap',''],['gap',''],['gap','']],
+    [['NumLock','Num'],['NumpadDivide','/'],['NumpadMultiply','*'],['NumpadSubtract','-']],
+    [['Numpad7','7'],['Numpad8','8'],['Numpad9','9'],['NumpadAdd','+']],
+    [['Numpad4','4'],['Numpad5','5'],['Numpad6','6'],['gap','']],
+    [['Numpad1','1'],['Numpad2','2'],['Numpad3','3'],['NumpadEnter','Ent']],
+    [['Numpad0','0','w2'],['NumpadDecimal','.'],['gap','']]
+  ];
+
+  function renderKbBlock(rows) {
+    return rows.map(function (row) {
+      return '<div class="kb-row">' + row.map(function (item) {
+        var code = item[0], label = item[1], cls = item[2] || '';
+        if (code === 'gap') return '<div class="k gap"></div>';
+        return '<div class="k ' + cls + '" data-code="' + esc(code) + '">' + esc(label) + '</div>';
+      }).join('') + '</div>';
+    }).join('');
+  }
+  document.getElementById('kb-board').innerHTML =
+    '<div class="kb-main">' + renderKbBlock(KB_MAIN) + '</div>' +
+    '<div class="kb-nav">' + renderKbBlock(KB_NAV) + '</div>' +
+    '<div class="kb-num">' + renderKbBlock(KB_NUM) + '</div>';
+
+  var kbHits = {};
+  var kbLastDown = {};
+  var kbChatter = 0;
+
+  window.resetKeyboard = function () {
+    kbHits = {}; kbLastDown = {}; kbChatter = 0;
+    manualState.kbTestedCount = 0;
+    manualState.kbChatterCount = 0;
+    var els = document.querySelectorAll('#kb-board .k');
+    for (var i = 0; i < els.length; i++) els[i].classList.remove('hit', 'chatter');
+    document.getElementById('kb-count').textContent = '0 keys pressed';
+    document.getElementById('kb-chatter').textContent = 'Chatter: 0';
+    document.getElementById('kb-chatter').className = 'badge b-pass';
+  };
+
+  document.addEventListener('keydown', function (e) {
+    if (document.getElementById('screen-overlay').classList.contains('active')) {
+      if (e.key === 'Escape') { exitScreenTest(); return; }
+      if (e.key === ' ' || e.key === 'ArrowRight') { e.preventDefault(); nextScreenMode(); return; }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); prevScreenMode(); return; }
+    }
+    var tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (currentStepIdx !== 0) return;
+
+    e.preventDefault();
+    var code = e.code || e.key;
+    var now = performance.now();
+    var el = document.querySelector('#kb-board .k[data-code="' + CSS.escape(code) + '"]');
+    if (!e.repeat && kbLastDown[code] && (now - kbLastDown[code]) < 15) {
+      kbChatter++;
+      manualState.kbChatterCount = kbChatter;
+      document.getElementById('kb-chatter').textContent = 'Chatter: ' + kbChatter;
+      document.getElementById('kb-chatter').className = 'badge b-warn';
+      if (el) el.classList.add('chatter');
+    }
+    if (!e.repeat) kbLastDown[code] = now;
+    if (!kbHits[code]) {
+      kbHits[code] = true;
+      manualState.kbTestedCount = Object.keys(kbHits).length;
+      document.getElementById('kb-count').textContent = manualState.kbTestedCount + ' keys pressed';
+    }
+    if (el) el.classList.add('hit');
+  });
+
+  // ---- Step 2: Touchpad & Touchscreen ----
+  var tpCanvas = document.getElementById('tp-canvas');
+  var tpCtx = tpCanvas.getContext('2d');
+  var tpDrawing = false;
+  var tpMovedOnDown = false;
+  var tpBadges = {};
+
+  function markTp(id, label) {
+    if (tpBadges[id]) return;
+    tpBadges[id] = true;
+    var el = document.getElementById(id);
+    if (el) { el.className = 'badge b-pass'; el.textContent = label + ': OK'; }
+  }
+  window.clearTouchpadCanvas = function () {
+    tpCtx.clearRect(0, 0, tpCanvas.width, tpCanvas.height);
+  };
+  tpCanvas.addEventListener('contextmenu', function (e) { e.preventDefault(); markTp('tp-right', 'Right Click'); });
+  tpCanvas.addEventListener('pointerdown', function (e) {
+    tpDrawing = true;
+    tpMovedOnDown = false;
+    var rect = tpCanvas.getBoundingClientRect();
+    var x = (e.clientX - rect.left) * (tpCanvas.width / rect.width);
+    var y = (e.clientY - rect.top) * (tpCanvas.height / rect.height);
+    tpCtx.beginPath();
+    tpCtx.moveTo(x, y);
+    if (e.button === 0) markTp('tp-left', 'Left Click');
+    else if (e.button === 1) markTp('tp-middle', 'Middle Click');
+    else if (e.button === 2) markTp('tp-right', 'Right Click');
+    if (e.pointerType === 'touch' || e.pointerType === 'pen') markTp('tp-touch', 'Touch/Pen');
+  });
+  tpCanvas.addEventListener('pointermove', function (e) {
+    markTp('tp-move', 'Move');
+    if (!tpDrawing) return;
+    tpMovedOnDown = true;
+    markTp('tp-drag', 'Drag');
+    var rect = tpCanvas.getBoundingClientRect();
+    var x = (e.clientX - rect.left) * (tpCanvas.width / rect.width);
+    var y = (e.clientY - rect.top) * (tpCanvas.height / rect.height);
+    tpCtx.strokeStyle = '#38bdf8';
+    tpCtx.lineWidth = 3;
+    tpCtx.lineCap = 'round';
+    tpCtx.lineTo(x, y);
+    tpCtx.stroke();
+  });
+  window.addEventListener('pointerup', function () { tpDrawing = false; });
+  tpCanvas.addEventListener('wheel', function (e) { e.preventDefault(); markTp('tp-scroll', 'Scroll'); }, { passive: false });
+
+  // ---- Step 3: Screen 10-Mode Fullscreen Inspector ----
+  var SCREEN_MODES = [
+    { name: 'Solid Black (Backlight Bleed)', bg: '#000000' },
+    { name: 'Solid White (Uniformity / Yellowing)', bg: '#ffffff' },
+    { name: 'Pure Red (Subpixels)', bg: '#ff0000' },
+    { name: 'Pure Green (Subpixels)', bg: '#00ff00' },
+    { name: 'Pure Blue (Subpixels)', bg: '#0000ff' },
+    { name: '50% Neutral Gray (Burn-In / Uniformity)', bg: '#808080' },
+    { name: 'RGB Color Gradient (Banding)', bg: 'linear-gradient(90deg,#000,#f00,#0f0,#00f,#fff)' },
+    { name: 'Checkerboard (Contrast / Pixel Inversion)', bg: 'repeating-conic-gradient(#000 0% 25%, #fff 0% 50%) 50% / 32px 32px' },
+    { name: 'Alignment Grid', bg: '#000 linear-gradient(#2c3e50 1px, transparent 1px), linear-gradient(90deg, #2c3e50 1px, transparent 1px)' },
+    { name: 'Motion & Refresh Rate Test', motion: true }
+  ];
+  var screenModeIdx = 0;
+  var motionRaf = null;
+
+  function applyScreenMode() {
+    var ov = document.getElementById('screen-overlay');
+    var mc = document.getElementById('screen-motion-canvas');
+    var hud = document.getElementById('screen-hud');
+    var m = SCREEN_MODES[screenModeIdx];
+
+    if (motionRaf) { cancelAnimationFrame(motionRaf); motionRaf = null; }
+    ov.style.backgroundSize = '';
+
+    if (m.motion) {
+      mc.style.display = 'block';
+      mc.width = window.innerWidth;
+      mc.height = window.innerHeight;
+      var ctx = mc.getContext('2d');
+      var x = 0;
+      var frames = 0;
+      var lastTs = performance.now();
+      var measuredHz = 60;
+      var loop = function (ts) {
+        if (!ov.classList.contains('active') || !SCREEN_MODES[screenModeIdx].motion) return;
+        frames++;
+        if (ts - lastTs >= 500) {
+          measuredHz = Math.round((frames * 1000) / (ts - lastTs));
+          document.getElementById('screen-hz-label').textContent = measuredHz + ' Hz';
+          hud.textContent = (screenModeIdx + 1) + '/10: ' + m.name + ' (' + measuredHz + ' Hz) | Click/Space=Next | Esc=Exit';
+          frames = 0; lastTs = ts;
+        }
+        ctx.fillStyle = '#0b1020';
+        ctx.fillRect(0, 0, mc.width, mc.height);
+        for (var r = 0; r < 5; r++) {
+          var speed = (r + 1) * 4;
+          var rx = (x * speed) % (mc.width + 120) - 120;
+          ctx.fillStyle = ['#38bdf8', '#4ade80', '#fbbf24', '#f87171', '#ffffff'][r];
+          ctx.fillRect(rx, 80 + r * ((mc.height - 160) / 5), 110, 48);
+        }
+        x += 1;
+        motionRaf = requestAnimationFrame(loop);
+      };
+      hud.textContent = (screenModeIdx + 1) + '/10: ' + m.name + ' | Measuring Hz... | Esc=Exit';
+      motionRaf = requestAnimationFrame(loop);
+    } else {
+      mc.style.display = 'none';
+      if (m.name.indexOf('Alignment Grid') === 0) {
+        ov.style.background = '#05080f';
+        ov.style.backgroundImage = 'linear-gradient(rgba(56,189,248,0.45) 1px, transparent 1px), linear-gradient(90deg, rgba(56,189,248,0.45) 1px, transparent 1px)';
+        ov.style.backgroundSize = '40px 40px';
+      } else {
+        ov.style.background = m.bg;
+      }
+      hud.textContent = (screenModeIdx + 1) + '/10: ' + m.name + ' | Click/Space=Next | Esc=Exit';
+    }
+  }
+
+  window.startScreenTest = function (idx) {
+    screenModeIdx = idx || 0;
+    var ov = document.getElementById('screen-overlay');
+    ov.classList.add('active');
+    applyScreenMode();
+    if (ov.requestFullscreen) { ov.requestFullscreen().catch(function () {}); }
+  };
+  window.nextScreenMode = function () {
+    if (screenModeIdx + 1 >= SCREEN_MODES.length) { exitScreenTest(); return; }
+    screenModeIdx++;
+    applyScreenMode();
+  };
+  window.prevScreenMode = function () {
+    screenModeIdx = (screenModeIdx - 1 + SCREEN_MODES.length) % SCREEN_MODES.length;
+    applyScreenMode();
+  };
+  function exitScreenTest() {
+    if (motionRaf) { cancelAnimationFrame(motionRaf); motionRaf = null; }
+    var ov = document.getElementById('screen-overlay');
+    ov.classList.remove('active');
+    if (document.fullscreenElement && document.exitFullscreen) {
+      document.exitFullscreen().catch(function () {});
+    }
+  }
+
+  // ---- Step 4: Speakers & Audio ----
+  var audioCtx = null;
+  var activeOsc = null;
+  function getAC() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+  window.stopAudio = function () {
+    if (activeOsc) { try { activeOsc.stop(); activeOsc.disconnect(); } catch (e) {} activeOsc = null; }
+  };
+  window.playTone = function (panMode) {
+    window.stopAudio();
+    var ctx = getAC();
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 440;
+    gain.gain.value = 0.25;
+    if (ctx.createStereoPanner) {
+      var pan = ctx.createStereoPanner();
+      pan.pan.value = panMode === 'left' ? -1 : (panMode === 'right' ? 1 : 0);
+      osc.connect(gain).connect(pan).connect(ctx.destination);
+    } else {
+      osc.connect(gain).connect(ctx.destination);
+    }
+    osc.start();
+    activeOsc = osc;
+  };
+  window.playSweep = function () {
+    window.stopAudio();
+    var ctx = getAC();
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(120, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(6000, ctx.currentTime + 4.0);
+    gain.gain.value = 0.22;
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 4.1);
+    activeOsc = osc;
+  };
+
+  // ---- Step 5: Webcam ----
+  var camStream = null;
+  window.startWebcam = function () {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      document.getElementById('cam-msg').textContent = 'Camera API unavailable (run via localhost server instead of file://).';
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ video: true }).then(function (stream) {
+      camStream = stream;
+      var v = document.getElementById('cam-video');
+      v.srcObject = stream;
+      v.onloadedmetadata = function () {
+        document.getElementById('cam-res').textContent = v.videoWidth + 'x' + v.videoHeight;
+      };
+      document.getElementById('cam-msg').textContent = 'Camera active. Tracks auto-stop when leaving this step.';
+    }).catch(function (err) {
+      document.getElementById('cam-msg').textContent = 'Webcam error: ' + err.message;
+    });
+  };
+  window.stopWebcam = function () {
+    if (camStream) {
+      camStream.getTracks().forEach(function (t) { t.stop(); });
+      camStream = null;
+    }
+    var v = document.getElementById('cam-video');
+    if (v) v.srcObject = null;
+  };
+
+  // ---- Step 6: Microphone & WAV ----
+  var micStream = null;
+  var micRaf = null;
+  var micAudioCtx = null;
+  var lastWavBlob = null;
+
+  function encodeWavFromAudioBuffer(abuf) {
+    var numCh = 1;
+    var data = abuf.getChannelData(0);
+    var sampleRate = abuf.sampleRate;
+    var buffer = new ArrayBuffer(44 + data.length * 2);
+    var view = new DataView(buffer);
+    function ws(off, str) { for (var i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); }
+    ws(0, 'RIFF'); view.setUint32(4, 36 + data.length * 2, true);
+    ws(8, 'WAVE'); ws(12, 'fmt '); view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); view.setUint16(22, numCh, true);
+    view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    ws(36, 'data'); view.setUint32(40, data.length * 2, true);
+    var offset = 44;
+    for (var i = 0; i < data.length; i++, offset += 2) {
+      var s = Math.max(-1, Math.min(1, data[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+    return new Blob([buffer], { type: 'audio/wav' });
+  }
+
+  window.startMic = function () {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      document.getElementById('mic-msg').textContent = 'Microphone API unavailable (run via localhost server instead of file://).';
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      micStream = stream;
+      micAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      var src = micAudioCtx.createMediaStreamSource(stream);
+      var analyser = micAudioCtx.createAnalyser();
+      analyser.fftSize = 512;
+      src.connect(analyser);
+      var buf = new Uint8Array(analyser.frequencyBinCount);
+      var cv = document.getElementById('mic-canvas');
+      var ctx = cv.getContext('2d');
+      var draw = function () {
+        if (!micStream) return;
+        analyser.getByteTimeDomainData(buf);
+        var peak = 0;
+        ctx.fillStyle = '#0b1220';
+        ctx.fillRect(0, 0, cv.width, cv.height);
+        ctx.strokeStyle = '#4ade80';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (var i = 0; i < buf.length; i++) {
+          var v = (buf[i] - 128) / 128;
+          if (Math.abs(v) > peak) peak = Math.abs(v);
+          var x = (i / buf.length) * cv.width;
+          var y = (cv.height / 2) + v * (cv.height / 2);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        document.getElementById('mic-meter').style.width = Math.min(100, Math.round(peak * 180)) + '%';
+        micRaf = requestAnimationFrame(draw);
+      };
+      draw();
+      document.getElementById('mic-msg').textContent = 'Listening... Speak near microphone.';
+    }).catch(function (err) {
+      document.getElementById('mic-msg').textContent = 'Microphone error: ' + err.message;
+    });
+  };
+  window.recordMicSample = function () {
+    if (!micStream) { window.startMic(); setTimeout(window.recordMicSample, 450); return; }
+    if (typeof MediaRecorder === 'undefined') {
+      document.getElementById('mic-msg').textContent = 'MediaRecorder unsupported in this browser.';
+      return;
+    }
+    var chunks = [];
+    var mr = new MediaRecorder(micStream);
+    mr.ondataavailable = function (e) { if (e.data.size > 0) chunks.push(e.data); };
+    mr.onstop = function () {
+      var blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' });
+      var au = document.getElementById('mic-playback');
+      au.src = URL.createObjectURL(blob);
+      au.style.display = 'block';
+      document.getElementById('mic-msg').textContent = '3s recording ready for playback.';
+      blob.arrayBuffer().then(function (ab) {
+        return getAC().decodeAudioData(ab);
+      }).then(function (decoded) {
+        lastWavBlob = encodeWavFromAudioBuffer(decoded);
+        document.getElementById('btn-dl-wav').style.display = 'inline-flex';
+      }).catch(function () {});
+    };
+    document.getElementById('mic-msg').textContent = 'Recording 3 seconds...';
+    mr.start();
+    setTimeout(function () { if (mr.state === 'recording') mr.stop(); }, 3000);
+  };
+  window.downloadLastWav = function () {
+    if (!lastWavBlob) return;
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(lastWavBlob);
+    a.download = 'LaptopInspect_MicCheck.wav';
+    a.click();
+  };
+  window.stopMic = function () {
+    if (micRaf) { cancelAnimationFrame(micRaf); micRaf = null; }
+    if (micStream) { micStream.getTracks().forEach(function (t) { t.stop(); }); micStream = null; }
+    if (micAudioCtx) { try { micAudioCtx.close(); } catch (e) {} micAudioCtx = null; }
+  };
+
+  // ---- Step 7: Live Hot-Plug Port Watcher ----
+  var portTimer = null;
+  var prevSnap = reportData.InitialPorts || null;
+
+  function snapSet(arr, keyFn) {
+    var m = {};
+    toArr(arr).forEach(function (x) { m[keyFn(x)] = true; });
+    return m;
+  }
+  function appendPortLog(msg) {
+    var box = document.getElementById('port-log');
+    var line = document.createElement('div');
+    line.textContent = msg;
+    box.appendChild(line);
+    box.scrollTop = box.scrollHeight;
+  }
+  function diffSnapshots(oldS, newS) {
+    if (!oldS) return;
+    var ts = newS.Timestamp || '';
+    if (oldS.AcOnline !== newS.AcOnline) {
+      appendPortLog('[' + ts + '] AC Power changed: ' + (newS.AcOnline ? 'PLUGGED IN' : 'UNPLUGGED'));
+    }
+    var oldUsb = snapSet(oldS.UsbDevices, function (u) { return u.DeviceID || u.Name; });
+    var newUsb = snapSet(newS.UsbDevices, function (u) { return u.DeviceID || u.Name; });
+    toArr(newS.UsbDevices).forEach(function (u) { if (!oldUsb[u.DeviceID || u.Name]) appendPortLog('[' + ts + '] + USB CONNECTED: ' + u.Name); });
+    toArr(oldS.UsbDevices).forEach(function (u) { if (!newUsb[u.DeviceID || u.Name]) appendPortLog('[' + ts + '] - USB REMOVED: ' + u.Name); });
+
+    var oldMon = snapSet(oldS.Monitors, function (m) { return m; });
+    var newMon = snapSet(newS.Monitors, function (m) { return m; });
+    toArr(newS.Monitors).forEach(function (m) { if (!oldMon[m]) appendPortLog('[' + ts + '] + DISPLAY CONNECTED: ' + m); });
+    toArr(oldS.Monitors).forEach(function (m) { if (!newMon[m]) appendPortLog('[' + ts + '] - DISPLAY REMOVED: ' + m); });
+
+    var oldNet = snapSet(oldS.NetLinks, function (n) { return n.Name; });
+    var newNet = snapSet(newS.NetLinks, function (n) { return n.Name; });
+    toArr(newS.NetLinks).forEach(function (n) { if (!oldNet[n.Name]) appendPortLog('[' + ts + '] + NET LINK UP: ' + n.Name + ' (' + n.LinkSpeed + ')'); });
+    toArr(oldS.NetLinks).forEach(function (n) { if (!newNet[n.Name]) appendPortLog('[' + ts + '] - NET LINK DOWN: ' + n.Name); });
+  }
+  function startPortWatcher() {
+    if (portTimer) return;
+    if (!window.__LI_SERVER__) {
+      document.getElementById('port-watch-status').textContent = 'Live Port Watcher requires the local server (active automatically on run). Use manual checkboxes below.';
+      return;
+    }
+    document.getElementById('port-watch-status').textContent = 'Live Port Watcher ACTIVE (polling every 1.5s)...';
+    document.getElementById('btn-port-watch').textContent = 'Stop Port Watcher';
+    document.getElementById('port-log').textContent = 'Watching ports (baseline ' + toArr((prevSnap || {}).UsbDevices).length + ' USB devices)...';
+    portTimer = setInterval(function () {
+      fetch('/api/ports').then(function (r) { return r.json(); }).then(function (snap) {
+        diffSnapshots(prevSnap, snap);
+        prevSnap = snap;
+      }).catch(function () {});
+    }, 1500);
+  }
+  function stopPortWatcher() {
+    if (portTimer) { clearInterval(portTimer); portTimer = null; }
+    var btn = document.getElementById('btn-port-watch');
+    if (btn) btn.textContent = 'Start Live Port Watcher';
+  }
+  window.togglePortWatcher = function () {
+    if (portTimer) stopPortWatcher(); else startPortWatcher();
+  };
+
+  // ---- Step 8: GPU 3D WebGL2 Stress Test ----
+  var gpuRaf = null;
+  var gpuCountdown = null;
+  var gpuObjects = 1500;
+  window.setGpuLoad = function (v) { gpuObjects = parseInt(v, 10) || 1500; };
+  window.stopGpuStress = function () {
+    if (gpuRaf) { cancelAnimationFrame(gpuRaf); gpuRaf = null; }
+    if (gpuCountdown) { clearInterval(gpuCountdown); gpuCountdown = null; }
+  };
+  window.startGpuStress = function (sec) {
+    window.stopGpuStress();
+    var canvas = document.getElementById('gpu-canvas');
+    var gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+    if (!gl) {
+      document.getElementById('gpu-renderer').textContent = 'WebGL unavailable on this browser/driver.';
+      return;
+    }
+    var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    var rend = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    document.getElementById('gpu-renderer').textContent = 'WebGL Renderer: ' + rend;
+
+    var vsSrc = 'attribute vec3 p; uniform mat4 m; void main(){ gl_Position = m * vec4(p, 1.0); }';
+    var fsSrc = 'precision mediump float; uniform float t; void main(){ gl_FragColor = vec4(0.5+0.5*sin(t), 0.5+0.5*cos(t*1.3), 0.7, 1.0); }';
+    function comp(type, src) {
+      var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s;
+    }
+    var prog = gl.createProgram();
+    gl.attachShader(prog, comp(gl.VERTEX_SHADER, vsSrc));
+    gl.attachShader(prog, comp(gl.FRAGMENT_SHADER, fsSrc));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+
+    var verts = new Float32Array([
+      -0.4,-0.4, 0.4,  0.4,-0.4, 0.4,  0.4, 0.4, 0.4, -0.4,-0.4, 0.4,  0.4, 0.4, 0.4, -0.4, 0.4, 0.4,
+      -0.4,-0.4,-0.4, -0.4, 0.4,-0.4,  0.4, 0.4,-0.4, -0.4,-0.4,-0.4,  0.4, 0.4,-0.4,  0.4,-0.4,-0.4,
+      -0.4, 0.4,-0.4, -0.4, 0.4, 0.4,  0.4, 0.4, 0.4, -0.4, 0.4,-0.4,  0.4, 0.4, 0.4,  0.4, 0.4,-0.4,
+      -0.4,-0.4,-0.4,  0.4,-0.4,-0.4,  0.4,-0.4, 0.4, -0.4,-0.4,-0.4,  0.4,-0.4, 0.4, -0.4,-0.4, 0.4
+    ]);
+    var vb = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vb);
+    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+    var pLoc = gl.getAttribLocation(prog, 'p');
+    gl.enableVertexAttribArray(pLoc);
+    gl.vertexAttribPointer(pLoc, 3, gl.FLOAT, false, 0, 0);
+    var mLoc = gl.getUniformLocation(prog, 'm');
+    var tLoc = gl.getUniformLocation(prog, 't');
+
+    var remaining = sec || 30;
+    document.getElementById('gpu-timer').textContent = 'Timer: ' + remaining + 's';
+    gpuCountdown = setInterval(function () {
+      remaining--;
+      document.getElementById('gpu-timer').textContent = 'Timer: ' + Math.max(0, remaining) + 's';
+      if (remaining <= 0) window.stopGpuStress();
+    }, 1000);
+
+    var frames = 0;
+    var fpsLast = performance.now();
+    var lastFrame = fpsLast;
+    var renderLoop = function (now) {
+      var dt = now - lastFrame; lastFrame = now;
+      frames++;
+      if (now - fpsLast >= 500) {
+        var fps = Math.round((frames * 1000) / (now - fpsLast));
+        document.getElementById('gpu-fps').textContent = 'FPS: ' + fps;
+        document.getElementById('gpu-ft').textContent = 'Frame: ' + dt.toFixed(1) + ' ms';
+        frames = 0; fpsLast = now;
+      }
+      gl.enable(gl.DEPTH_TEST);
+      gl.clearColor(0.04, 0.06, 0.12, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      var t = now * 0.002;
+      for (var i = 0; i < gpuObjects; i++) {
+        var a = t + (i * 0.05);
+        var c = Math.cos(a), s = Math.sin(a);
+        var ox = ((i % 20) - 10) * 0.08;
+        var oy = (Math.floor((i / 20) % 10) - 5) * 0.14;
+        var mat = new Float32Array([
+          c * 0.15, 0, s * 0.15, 0,
+          s * 0.08, c * 0.15, -s * 0.08, 0,
+          -s * 0.15, s * 0.08, c * 0.15, 0,
+          ox, oy, 0, 1
+        ]);
+        gl.uniformMatrix4fv(mLoc, false, mat);
+        gl.uniform1f(tLoc, t + i * 0.01);
+        gl.drawArrays(gl.TRIANGLES, 0, 24);
+      }
+      gpuRaf = requestAnimationFrame(renderLoop);
+    };
+    gpuRaf = requestAnimationFrame(renderLoop);
+  };
+
+  // ---- Save & Export Actions ----
+  function buildPlainTextSummary() {
+    var sys = reportData.System || {};
+    var corp = reportData.CorporateLock || {};
+    var bat = reportData.Battery || {};
+    var cpu = reportData.Cpu || {};
+    var ram = reportData.Ram || {};
+    var stor = reportData.Storage || {};
+    var gpu = reportData.Gpu || {};
+    var live = computeLiveVerdict();
+
+    var lines = [];
+    lines.push('=== LAPTOP INSPECT REPORT ===');
+    lines.push('Verdict: ' + live.verdict + ' (' + live.score + '/100)');
+    lines.push('Model: ' + (sys.Manufacturer || '') + ' ' + (sys.Model || '') + ' | Serial: ' + (sys.SerialNumber || ''));
+    lines.push('Corporate Lock: ' + (corp.ConfirmedCorporateLock ? 'LOCKED / MANAGED' : 'No Local Lock') +
+      ' (Autopilot=' + ((corp.Autopilot || {}).Status || '?') + ', MDM=' + ((corp.Mdm || {}).Status || '?') + ', Computrace=' + ((corp.Computrace || {}).Status || '?') + ', BIOS-Pwd=' + ((corp.BiosSecurity || {}).Status || '?') + ')');
+    lines.push('CPU: ' + (cpu.CpuName || '') + ' (' + cpu.PhysicalCores + 'C/' + cpu.LogicalProcessors + 'T)');
+    lines.push('GPU: ' + toArr(gpu.Gpus).map(function (g) { return g.Name + ' (' + g.VramGB + 'GB)'; }).join('; '));
+    lines.push('RAM: ' + (ram.TotalGB || '?') + ' GB (' + (ram.UsedSlots || '?') + '/' + (ram.TotalSlots || '?') + ' slots)');
+    lines.push('Storage: ' + toArr(stor.Disks).filter(function (d) { return !d.IsExternal; }).map(function (d) { return d.FriendlyName + ' ' + d.SizeGB + 'GB [' + d.HealthStatus + ']'; }).join('; '));
+    lines.push('Battery: ' + (bat.OverallHealthPercent !== null && bat.OverallHealthPercent !== undefined ? bat.OverallHealthPercent + '%' : bat.Condition) +
+      ' (' + (bat.Condition || '') + ', Cycles=' + (bat.MaxCycleCount !== null && bat.MaxCycleCount !== undefined ? bat.MaxCycleCount : 'N/A') + ')');
+    lines.push('Guided Checks: ' + STEPS.map(function (s) { return s.label.replace(/^\d+\.\s*/, '') + '=' + (manualState.results[s.id] || 'Pending'); }).join(', '));
+    if (manualState.chassisGrade || manualState.askingPrice) {
+      lines.push('Grade/Price: Chassis=' + (manualState.chassisGrade || '-') + ', Charger=' + (manualState.chargerType || '-') + ', Price=' + (manualState.askingPrice || '-'));
+    }
+    if (live.crit.length) lines.push('CRITICAL: ' + live.crit.join(' | '));
+    if (live.warns.length) lines.push('WARNINGS: ' + live.warns.join(' | '));
+    return lines.join('\n');
+  }
+
+  window.copyTextSummary = function () {
+    var txt = buildPlainTextSummary();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(function () { showToast('Summary copied to clipboard'); });
+    } else {
+      window.prompt('Copy inspection summary:', txt);
+    }
+  };
+
+  window.exportTxtSummary = function () {
+    var blob = new Blob([buildPlainTextSummary()], { type: 'text/plain;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'LaptopInspect_' + ((reportData.System || {}).SerialNumber || 'Report') + '.txt';
+    a.click();
+  };
+
+  window.saveCompletedReport = function () {
+    if (window.__LI_SERVER__ === true) {
+      fetch('/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(manualState)
+      }).then(function (r) { return r.json(); }).then(function (res) {
+        if (res && res.ok) showToast('Saved completed report to: ' + res.path);
+        else showToast('Save failed');
+      }).catch(function () { showToast('Save request failed'); });
+    } else {
+      var manualEl = document.getElementById('li-manual-state');
+      manualEl.textContent = JSON.stringify(manualState).replace(/<\/script/gi, '<\\/script');
+      var fullHtml = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+      var blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'LaptopReport_Completed_' + ((reportData.System || {}).SerialNumber || 'Report') + '.html';
+      a.click();
+      showToast('Downloaded updated standalone HTML report');
+    }
+  };
+
+  window.exportJsonFile = function () {
+    if (window.__LI_SERVER__ === true) {
+      fetch('/api/export-json', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(manualState)
+      }).then(function (r) { return r.json(); }).then(function (res) {
+        if (res && res.ok) showToast('Exported JSON to: ' + res.path);
+      }).catch(function () {});
+    } else {
+      var blob = new Blob([JSON.stringify({ Automated: reportData, Manual: manualState }, null, 2)], { type: 'application/json' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'LaptopInspect_' + ((reportData.System || {}).SerialNumber || 'Report') + '.json';
+      a.click();
+    }
+  };
+
+  window.shutdownServer = function () {
+    if (!window.__LI_SERVER__) return;
+    fetch('/api/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(manualState) })
+      .catch(function () {})
+      .finally(function () {
+        fetch('/api/shutdown', { method: 'POST' }).then(function () {
+          window.__LI_SERVER__ = false;
+          stopPortWatcher();
+          document.getElementById('btn-shutdown-srv').style.display = 'none';
+          showToast('Saved and closed local server cleanly.');
+        }).catch(function () {});
+      });
+  };
+
+  window.toggleTheme = function () {
+    var cur = document.documentElement.getAttribute('data-theme') || 'light';
+    var next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('li-theme', next); } catch (e) {}
+  };
+
+  // Init
+  try {
+    var savedTheme = localStorage.getItem('li-theme');
+    if (savedTheme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  } catch (e) {}
+
+  if (window.__LI_SERVER__ === true) {
+    document.getElementById('btn-shutdown-srv').style.display = 'inline-flex';
+  }
+  renderCorporateLock();
+  renderTelemetryTables();
+  restoreManualInputs();
+  renderWizardPills();
+  renderTopAndScoring();
+})();
+</script>
+</body>
+</html>

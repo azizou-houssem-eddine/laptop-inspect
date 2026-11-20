@@ -1,0 +1,7 @@
+reports/
+tests/out/
+dist/
+*.tmp
+LaptopReport_*.html
+LaptopReport_*.json
+LaptopInspect_elevated*.ps1
