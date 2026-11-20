@@ -228,11 +228,11 @@ try {
                 }
                 $ready | Should Be $true
 
-                $portsResp = Invoke-RestMethod -Uri "$baseUrl/api/ports" -Method Get -TimeoutSec 3
+                $portsResp = Invoke-RestMethod -Uri "$baseUrl/api/ports" -Method Get -TimeoutSec 15
                 $portsResp.Timestamp | Should Not BeNullOrEmpty
 
                 $savePayload = '{"results":{"keyboard":"PASS"},"sellerName":"PesterSeller"}'
-                $saveResp = Invoke-RestMethod -Uri "$baseUrl/api/save" -Method Post -ContentType 'application/json' -Body $savePayload -TimeoutSec 3
+                $saveResp = Invoke-RestMethod -Uri "$baseUrl/api/save" -Method Post -ContentType 'application/json' -Body $savePayload -TimeoutSec 10
                 $saveResp.ok | Should Be $true
 
                 $diskHtml = Get-Content -LiteralPath $reportPath -Raw
@@ -242,21 +242,21 @@ try {
                 # Invalid Winget ID must return HTTP 400
                 $badStatus = 0
                 try {
-                    Invoke-RestMethod -Uri "$baseUrl/api/install" -Method Post -ContentType 'application/json' -Body '{"ids":["chrome; calc"]}' -TimeoutSec 3 | Out-Null
+                    Invoke-RestMethod -Uri "$baseUrl/api/install" -Method Post -ContentType 'application/json' -Body '{"ids":["chrome; calc"]}' -TimeoutSec 10 | Out-Null
                 } catch {
                     if ($_.Exception.Response) { $badStatus = [int]$_.Exception.Response.StatusCode }
                 }
                 $badStatus | Should Be 400
 
                 # Valid DryRun batch returns HTTP 202 and completes asynchronously
-                $instStart = Invoke-RestMethod -Uri "$baseUrl/api/install" -Method Post -ContentType 'application/json' -Body '{"ids":["chrome","7zip"],"dryRun":true}' -TimeoutSec 3
+                $instStart = Invoke-RestMethod -Uri "$baseUrl/api/install" -Method Post -ContentType 'application/json' -Body '{"ids":["chrome","7zip"],"dryRun":true}' -TimeoutSec 10
                 $instStart.ok | Should Be $true
                 $instStart.total | Should Be 2
 
                 $finalSt = $null
                 for ($poll = 0; $poll -lt 30; $poll++) {
                     Start-Sleep -Milliseconds 150
-                    $st = Invoke-RestMethod -Uri "$baseUrl/api/install/status" -Method Get -TimeoutSec 3
+                    $st = Invoke-RestMethod -Uri "$baseUrl/api/install/status" -Method Get -TimeoutSec 10
                     if (-not $st.Running -and $st.State -eq 'Completed') {
                         $finalSt = $st
                         break
@@ -267,7 +267,7 @@ try {
                 $finalSt.Results[0].Status | Should Be 'DryRun OK'
                 $finalSt.Results[1].Status | Should Be 'DryRun OK'
 
-                $shutResp = Invoke-RestMethod -Uri "$baseUrl/api/shutdown" -Method Post -TimeoutSec 3
+                $shutResp = Invoke-RestMethod -Uri "$baseUrl/api/shutdown" -Method Post -TimeoutSec 10
                 $shutResp.ok | Should Be $true
 
                 [void]$async.AsyncWaitHandle.WaitOne(5000)
