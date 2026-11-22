@@ -279,6 +279,57 @@ try {
                 }
             }
         }
+
+        It 'Battery test API returns Idle status and rejects invalid parameters with HTTP 400' {
+            $port = Get-FreeLoopbackPort
+            $tmpDir = Join-Path $env:TEMP ("li_pester_bathttp_{0}" -f $PID)
+            New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+            $reportPath = Join-Path $tmpDir 'LaptopReport_Bat.html'
+            $mockData = [PSCustomObject]@{
+                Meta = [PSCustomObject]@{ ToolVersion = '1.3.0'; GeneratedAt = '2026-11-22'; DurationSeconds = 1.0 }
+                System = [PSCustomObject]@{ Manufacturer = 'TestCo'; Model = 'TestLap'; SerialNumber = 'B001' }
+                Scoring = [PSCustomObject]@{ Verdict = 'BUY'; Score = 100; Deductions = @(); CriticalFlags = @(); Warnings = @(); Advisories = @() }
+            }
+            Write-AtomicTextFile -Path $reportPath -Content (Build-ReportHtml -ReportData $mockData -ServerMode $false)
+
+            $ps = [PowerShell]::Create()
+            [void]$ps.AddScript({
+                param($BuiltPath, $DataObj, $OutHtml, $ListenPort)
+                $env:LAPTOP_INSPECT_IMPORT_ONLY = '1'
+                . $BuiltPath
+                Start-ReportHttpServer -ReportData $DataObj -ReportPath $OutHtml -Port $ListenPort -NoLaunchBrowser -MaxSeconds 15
+            }).AddArgument($builtScript).AddArgument($mockData).AddArgument($reportPath).AddArgument($port)
+            $async = $ps.BeginInvoke()
+
+            try {
+                $baseUrl = "http://127.0.0.1:$port"
+                $ready = $false
+                for ($w = 0; $w -lt 25; $w++) {
+                    try {
+                        $bSt = Invoke-RestMethod -Uri "$baseUrl/api/battery-test/status" -Method Get -TimeoutSec 5
+                        if ($bSt.State -eq 'Idle') { $ready = $true; break }
+                    } catch {
+                        Start-Sleep -Milliseconds 150
+                    }
+                }
+                $ready | Should Be $true
+
+                $badCode = 0
+                try {
+                    Invoke-RestMethod -Uri "$baseUrl/api/battery-test/start" -Method Post -ContentType 'application/json' -Body '{"minutes":999,"mode":"everyday","cutoffPct":10}' -TimeoutSec 5 | Out-Null
+                } catch {
+                    if ($_.Exception.Response) { $badCode = [int]$_.Exception.Response.StatusCode }
+                }
+                $badCode | Should Be 400
+
+                Invoke-RestMethod -Uri "$baseUrl/api/shutdown" -Method Post -TimeoutSec 5 | Out-Null
+                [void]$async.AsyncWaitHandle.WaitOne(5000)
+                $ps.EndInvoke($async) | Out-Null
+            } finally {
+                $ps.Dispose()
+                if (Test-Path -LiteralPath $tmpDir) { Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue }
+            }
+        }
     }
 
     Describe 'Silent App Installer (65-installer.ps1)' {
@@ -363,6 +414,78 @@ try {
             Format-TuiBar -Percent 100 -Width 10 | Should Be '[##########]'
             (Format-TuiPad -Text 'ABC' -Width 6) | Should Be 'ABC   '
             (Format-TuiPad -Text 'ABCDEFGHIJ' -Width 7) | Should Be 'ABCD...'
+        }
+    }
+
+    Describe 'Timed Battery Drain & Everyday Load (50-battery-power.ps1)' {
+        It 'Computes linear drain summary and estimated 100-to-0 runtime cleanly' {
+            $samples = @(
+                [PSCustomObject]@{ ElapsedSec = 0;   ChargePct = 90; RemainingMWh = 45000; DischargeMw = 15000; VoltageMv = 11400 },
+                [PSCustomObject]@{ ElapsedSec = 300; ChargePct = 88; RemainingMWh = 44000; DischargeMw = 14000; VoltageMv = 11350 },
+                [PSCustomObject]@{ ElapsedSec = 600; ChargePct = 87; RemainingMWh = 43500; DischargeMw = 16000; VoltageMv = 11300 },
+                [PSCustomObject]@{ ElapsedSec = 900; ChargePct = 85; RemainingMWh = 42500; DischargeMw = 15000; VoltageMv = 11250 }
+            )
+            $sum = Measure-BatteryDrainSummary -Samples $samples -TotalCapacityMWh 50000 -LoadMode 'everyday' -StopReason 'Completed (15 min timer)'
+            $sum.Status | Should Be 'PASS'
+            $sum.StartPct | Should Be 90
+            $sum.EndPct | Should Be 85
+            $sum.DropPct | Should Be 5
+            $sum.AvgDischargeWatts | Should Be 15
+            $sum.SuddenDropDetected | Should Be $false
+            $sum.EstimatedRuntimeFrom100Minutes | Should Be 200
+        }
+
+        It 'Detects sudden dead-cell drop >=5% within <=30s and flags FAIL' {
+            $samples = @(
+                [PSCustomObject]@{ ElapsedSec = 0;  ChargePct = 60; RemainingMWh = 30000; DischargeMw = 15000; VoltageMv = 11200 },
+                [PSCustomObject]@{ ElapsedSec = 10; ChargePct = 42; RemainingMWh = 21000; DischargeMw = 15000; VoltageMv = 10900 }
+            )
+            $sum = Measure-BatteryDrainSummary -Samples $samples -LoadMode 'everyday'
+            $sum.SuddenDropDetected | Should Be $true
+            $sum.Status | Should Be 'FAIL'
+            $sum.SuddenDropDetail | Should Match '60% -> 42%'
+        }
+
+        It 'Detects >15% voltage sag and flags WARN' {
+            $samples = @(
+                [PSCustomObject]@{ ElapsedSec = 0;  ChargePct = 80; RemainingMWh = 40000; DischargeMw = 12000; VoltageMv = 12000 },
+                [PSCustomObject]@{ ElapsedSec = 60; ChargePct = 79; RemainingMWh = 39500; DischargeMw = 12000; VoltageMv = 9800 }
+            )
+            $sum = Measure-BatteryDrainSummary -Samples $samples -LoadMode 'everyday'
+            ($sum.VoltageSagPct -gt 15.0) | Should Be $true
+            $sum.Status | Should Be 'WARN'
+        }
+
+        It 'Scores sudden drop and unfinished crash checkpoint as DO NOT BUY' {
+            $mock = [PSCustomObject]@{
+                System = [PSCustomObject]@{ IsLaptop = $true }
+                CorporateLock = $null
+                Cpu = $null
+                Gpu = $null
+                Ram = $null
+                Storage = $null
+                Battery = [PSCustomObject]@{ BatteryCount = 1; OverallHealthPercent = 88; MaxCycleCount = 50; AcFlickerDetected = $false; VoltageDroopDetected = $false }
+                PreviousBatteryCrash = [PSCustomObject]@{ LastChargePct = 45; ElapsedSeconds = 420; LoadMode = 'everyday' }
+                BatteryDrain = [PSCustomObject]@{ SuddenDropDetected = $true; SuddenDropDetail = '45% -> 12% in 5s'; VoltageSagPct = 5.0; LoadMode = 'everyday'; EstimatedRuntimeFrom100Minutes = 120 }
+                Peripherals = $null
+            }
+            $v = Get-BuyerVerdict -ReportData $mock
+            $v.Verdict | Should Be 'DO NOT BUY'
+            ($v.CriticalFlags -join ' ') | Should Match 'Unfinished battery drain'
+            ($v.CriticalFlags -join ' ') | Should Match 'Sudden battery charge collapse'
+        }
+
+        It 'Runs Everyday Use burst workload cleanly without error and cleans temp IO file' {
+            $buf = New-Object byte[] (32MB)
+            $ioPath = Join-Path $env:TEMP ("li_pester_io_{0}.tmp" -f $PID)
+            try {
+                Invoke-EverydayTickWorkload -WorkBuffer $buf -TickIndex 0 -IoTempPath $ioPath
+                Test-Path -LiteralPath $ioPath | Should Be $true
+            } finally {
+                if (Test-Path -LiteralPath $ioPath) { Remove-Item -LiteralPath $ioPath -Force -ErrorAction SilentlyContinue }
+                $buf = $null
+                [GC]::Collect()
+            }
         }
     }
 } finally {

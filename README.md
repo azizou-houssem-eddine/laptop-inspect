@@ -36,17 +36,18 @@ $env:LI_QUICK='1'; $env:LI_NO_BROWSER='1'; irm https://is.gd/lapcheck | iex
 $env:LI_INSTALL='essentials'; $env:LI_INSTALL_ONLY='1'; irm https://is.gd/lapcheck | iex
 ```
 
-Supported environment overrides: `LI_QUICK=1`, `LI_SKIP_STRESS=1`, `LI_STRESS_SECONDS=10`, `LI_NO_ELEVATE=1`, `LI_NO_BROWSER=1`, `LI_NO_SERVER=1`, `LI_JSON_ONLY=1`, `LI_OUTDIR="C:\Reports"`, `LI_INSTALL=<preset|comma-list>`, `LI_INSTALL_ONLY=1`, `LI_UPGRADE_ALL=1`, `LI_DRY_RUN=1`, `LI_MENU=1`, `LI_NO_MENU=1`.
+Supported environment overrides: `LI_QUICK=1`, `LI_SKIP_STRESS=1`, `LI_STRESS_SECONDS=10`, `LI_NO_ELEVATE=1`, `LI_NO_BROWSER=1`, `LI_NO_SERVER=1`, `LI_JSON_ONLY=1`, `LI_OUTDIR="C:\Reports"`, `LI_INSTALL=<preset|comma-list>`, `LI_INSTALL_ONLY=1`, `LI_UPGRADE_ALL=1`, `LI_DRY_RUN=1`, `LI_MENU=1`, `LI_NO_MENU=1`, `LI_BAT_MINUTES=15`, `LI_BAT_MODE=everyday`, `LI_BAT_CUTOFF=10`, `LI_BAT_ONLY=1`.
 
 ### Interactive Terminal UI (TUI)
-Running `irm is.gd/lapcheck | iex` in an interactive PowerShell window launches a clean arrow-key menu (`Up`/`Down` + `Enter` or hotkeys `1-6`, `E`, `0`) with:
+Running `irm is.gd/lapcheck | iex` in an interactive PowerShell window launches a clean arrow-key menu (`Up`/`Down` + `Enter` or hotkeys `1-7`, `E`, `0`) with:
 - **Live 9-Step Progress Table:** Replaces noisy logs with `[ PASS ]` / `[ WARN ]` / `[ FAIL ]` / `[ N/A  ]` status tags and per-step timing.
 - **Boxed Executive Buyer Scorecard:** Displays an ASCII health gauge, 8-point Corporate Lock matrix, and hardware summary right inside the console.
 - **Interactive App Picker (`[4]`):** Browse and toggle any of the 39 apps with `Spacebar` + `Enter` to install silently with zero prompts.
+- **Timed Battery Endurance (`[7]`):** Run real unplugged discharge tests (`5m..60m` or full drain to `10%` cutoff) under **Everyday Use** load with a live countdown clock.
 
 ### Offline USB Usage
 
-1. Download `LaptopInspect-v1.2.0.zip` from [Releases](https://github.com/azizou-houssem-eddine/laptop-inspect/releases).
+1. Download `LaptopInspect-v1.3.0.zip` from [Releases](https://github.com/azizou-houssem-eddine/laptop-inspect/releases).
 2. Extract to a USB flash drive.
 3. Double-click `RUN.bat` (auto-requests Admin elevation) or run `.\inspect.ps1` in PowerShell.
 
@@ -91,6 +92,11 @@ Available both inside **Section 4** of the browser UI and standalone via CLI/`ir
 - **39 Verified Packages (7 Categories):** Browsers (Chrome, Firefox, Brave), Essentials/Office (7-Zip, WinRAR, Acrobat, SumatraPDF, LibreOffice, Notepad++), Media (VLC, K-Lite, Spotify), Runtimes (VC++ x64/x86, .NET 8, DirectX, Java), Hardware Bench (HWiNFO, CrystalDiskInfo/Mark, CPU-Z, GPU-Z, OCCT, BleachBit), Communication/Remote (WhatsApp, Zoom, Discord, Telegram, AnyDesk, TeamViewer), Utilities/Dev (Everything, ShareX, Greenshot, PowerToys, qBittorrent, VS Code, Git, Python 3.12, Steam).
 - **1-Click Presets:** `essentials` (*Resale Essentials*), `office` (*Office & Student*), `tech` (*Technician Bench*), `dev` (*Developer Pack*), plus custom Winget IDs and `Upgrade All Existing Apps`.
 
+### 5. Real Timed Battery Endurance & Everyday Use Test
+Available via TUI `[7]`, Browser **Section 5**, or CLI (`-BatteryTestOnly -BatteryTestMinutes 15`):
+- **Realistic Everyday Use Simulator (Default):** Combines bursty multi-threaded SHA-256/math/JSON bursts (~25–35% CPU), 32 MB working-set RAM churn, periodic 4 MB disk cache I/O, and live browser canvas compositing while keeping the display/system awake (`SetThreadExecutionState`). Also offers `light` and `heavy` modes.
+- **Timers & Safety Cutoff:** Choose `5m`, `15m`, `30m`, `60m`, custom `1..240m`, or Full Drain down to a configurable `10%` cutoff. Auto-detects AC unplug, aborts cleanly if charger is reconnected, logs a crash-safe checkpoint every 15s, plots a live Charge % + Voltage mV chart, and flags sudden `>=5%` dead-cell drops.
+
 ---
 
 ## CLI Parameters
@@ -111,6 +117,10 @@ Available both inside **Section 4** of the browser UI and standalone via CLI/`ir
 | `-InstallOnly` | Skips hardware diagnostics and runs the silent installer queue only |
 | `-DryRun` | Logs exact silent Winget commands without modifying the system |
 | `-Menu` / `-NoMenu` | Force-enable or skip the interactive TUI launcher menu |
+| `-BatteryTestMinutes <n>` | Timed battery drain minutes (`-1` = Full Drain to cutoff, `1..240`) |
+| `-BatteryTestMode <m>` | Load profile: `everyday` (default), `light`, or `heavy` |
+| `-BatteryCutoffPct <5..50>` | Safety cutoff percentage to stop drain cleanly (default `10`) |
+| `-BatteryTestOnly` | Runs the timed battery endurance test without full audit |
 
 ---
 

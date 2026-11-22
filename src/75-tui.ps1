@@ -452,6 +452,91 @@ function Invoke-TuiAppChecklistPicker {
     }
 }
 
+function Invoke-TuiBatteryDrainMenu {
+    if (-not (Test-InteractiveConsole)) { return }
+    $modes = @('everyday', 'light', 'heavy')
+    $modeIdx = 0
+    $cutoff = 10
+
+    while ($true) {
+        $curMode = $modes[$modeIdx]
+        $curSamp = Get-BatteryDischargeSample -ElapsedSec 0
+        try { Clear-Host } catch {}
+        Show-TuiHeader -Subtitle 'Real Timed Battery Endurance & Everyday Load Simulator'
+
+        if ($null -eq $curSamp.ChargePct) {
+            Write-Host ''
+            Write-Host '  [!] No battery detected on this system.' -ForegroundColor Red
+            Write-Host ''
+            Read-Host '  Press Enter to return to Main Menu' | Out-Null
+            return
+        }
+
+        $acState = if ($curSamp.PowerOnline) { 'Plugged In (Unplug AC before starting)' } else { 'On Battery (Ready)' }
+        $acCol = if ($curSamp.PowerOnline) { 'Yellow' } else { 'Green' }
+        Write-Host ("  Battery Now : {0}%  |  Voltage: {1} mV  |  AC: " -f $curSamp.ChargePct, $(if ($curSamp.VoltageMv) { $curSamp.VoltageMv } else { 'N/A' })) -NoNewline -ForegroundColor White
+        Write-Host $acState -ForegroundColor $acCol
+        Write-Host ("  Load Profile: {0}  |  Safety Cutoff: {1}%  ([M]=Cycle Load)" -f $curMode.ToUpperInvariant(), $cutoff) -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '  SELECT TIMER DURATION:' -ForegroundColor Cyan
+        Write-Host '    [1]  5 min  - Quick Buyer Cell-Drop Check' -ForegroundColor White
+        Write-Host '    [2] 15 min  - Standard Everyday Endurance Check' -ForegroundColor White
+        Write-Host '    [3] 30 min  - Extended Everyday Use Test' -ForegroundColor White
+        Write-Host '    [4] 60 min  - Deep Endurance Test' -ForegroundColor White
+        Write-Host ("    [5] Full Drain - Run until {0}% safety cutoff" -f $cutoff) -ForegroundColor White
+        Write-Host '    [6] Custom Minutes (1..240 min)' -ForegroundColor White
+        Write-Host '    [M] Switch Load Profile (everyday / light / heavy)' -ForegroundColor DarkCyan
+        Write-Host '    [B] Back to Main Menu' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  Select option [1-6, M, B]: ' -NoNewline -ForegroundColor Cyan
+
+        $k = [Console]::ReadKey($true)
+        $ch = $k.KeyChar.ToString().ToUpperInvariant()
+        Write-Host $ch
+
+        if ($ch -eq 'B' -or $k.Key -eq [ConsoleKey]::Escape) {
+            return
+        } elseif ($ch -eq 'M') {
+            $modeIdx = ($modeIdx + 1) % $modes.Count
+            continue
+        }
+
+        $mins = 0
+        switch ($ch) {
+            '1' { $mins = 5 }
+            '2' { $mins = 15 }
+            '3' { $mins = 30 }
+            '4' { $mins = 60 }
+            '5' { $mins = -1 }
+            '6' {
+                $rawM = Read-Host '  Enter minutes (1..240)'
+                if ($rawM -match '^\d+$') { $mins = [int]$rawM }
+            }
+        }
+        if ($mins -eq 0) { continue }
+
+        Write-Host ''
+        Write-Host ("  [+] Starting Timed Battery Drain ({0} mode, cutoff {1}%)..." -f $curMode, $cutoff) -ForegroundColor Green
+        $sum = Invoke-TimedBatteryDrainTest -Minutes $mins -CutoffPct $cutoff -LoadMode $curMode -ConsoleLive
+        Write-Host ''
+        Write-Host '  === Battery Endurance Summary ===' -ForegroundColor Cyan
+        Write-Host '  Status       : ' -NoNewline
+        Write-TuiStatusTag -Status $sum.Status -NoNewline
+        Write-Host (" ({0})" -f $sum.StopReason)
+        Write-Host ("  Elapsed      : {0} min ({1} samples)" -f $sum.ElapsedMinutes, $sum.SampleCount) -ForegroundColor White
+        Write-Host ("  Charge Drop  : {0}% -> {1}% (-{2}%)" -f $sum.StartPct, $sum.EndPct, $sum.DropPct) -ForegroundColor White
+        $avgWStr = if ($null -ne $sum.AvgDischargeWatts) { "$($sum.AvgDischargeWatts) W (Peak $($sum.PeakDischargeWatts) W)" } else { 'N/A' }
+        Write-Host ("  Power Draw   : {0}  |  Min Voltage: {1} mV (Sag {2}%)" -f $avgWStr, $(if ($sum.MinVoltageMv) { $sum.MinVoltageMv } else { 'N/A' }), $sum.VoltageSagPct) -ForegroundColor White
+        $estStr = if ($null -ne $sum.EstimatedRuntimeFrom100Minutes) { ("~{0} min ({1} hrs)" -f $sum.EstimatedRuntimeFrom100Minutes, [Math]::Round($sum.EstimatedRuntimeFrom100Minutes / 60.0, 1)) } else { 'Need >=1% drop or WMI rate' }
+        Write-Host ("  Est. 100->0% : {0}" -f $estStr) -ForegroundColor Green
+        if ($sum.SuddenDropDetected) {
+            Write-Host ("  [X] DEAD CELL ALERT: Sudden drop {0}" -f $sum.SuddenDropDetail) -ForegroundColor Red
+        }
+        Write-Host ''
+        Read-Host '  Press Enter to return' | Out-Null
+    }
+}
+
 function Show-TuiMainMenu {
     param([bool]$IsAdmin = (Test-IsAdmin))
 
@@ -461,7 +546,8 @@ function Show-TuiMainMenu {
         [PSCustomObject]@{ Key='3'; Action='TerminalOnly'; Title='[3] Terminal-Only Quick Scorecard (No Browser)';   Desc='Headless: Fast Corporate Lock + Hardware Scorecard in Console' },
         [PSCustomObject]@{ Key='4'; Action='InstallerTui'; Title='[4] Silent App Installer TUI (Ninite / WinUtil)';  Desc='Zero Prompts: Pick Presets or 39 Apps with Arrow Keys & Spacebar' },
         [PSCustomObject]@{ Key='5'; Action='AuditAndEss';  Title='[5] Full Audit + Auto-Install Resale Essentials';  Desc='All-in-One: Inspect Laptop & Silently Install 8 Buyer Essentials' },
-        [PSCustomObject]@{ Key='6'; Action='UpgradeAll';   Title='[6] Silent Upgrade All Existing Apps';             Desc='Runs winget upgrade --all with zero Next/Accept prompts' }
+        [PSCustomObject]@{ Key='6'; Action='UpgradeAll';   Title='[6] Silent Upgrade All Existing Apps';             Desc='Runs winget upgrade --all with zero Next/Accept prompts' },
+        [PSCustomObject]@{ Key='7'; Action='BatteryTui';   Title='[7] Timed Battery Drain Test (Everyday Load + Timer)'; Desc='Real Unplugged Endurance: 5m..60m or Full Drain w/ Live Chart & Timer' }
     )
     if (-not $IsAdmin) {
         $options += [PSCustomObject]@{ Key='E'; Action='Elevate'; Title='[E] Relaunch as Administrator (Recommended)'; Desc='Unlocks Vendor BIOS WMI, BitLocker, MDM CIM, and SSD SMART Wear' }
@@ -472,7 +558,7 @@ function Show-TuiMainMenu {
     while ($true) {
         try { Clear-Host } catch {}
         Show-TuiHeader -IsAdmin $IsAdmin
-        Write-Host '  Use [Up/Down] Arrows + [Enter], or press hotkey [1-6, 0]:' -ForegroundColor Yellow
+        Write-Host '  Use [Up/Down] Arrows + [Enter], or press hotkey [1-7, E, 0]:' -ForegroundColor Yellow
         Write-Host ''
 
         for ($i = 0; $i -lt $options.Count; $i++) {

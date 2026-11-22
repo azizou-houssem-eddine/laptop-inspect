@@ -255,6 +255,7 @@ input[type="text"], input[type="number"], select, textarea {
     </div>
     <div class="btn-row">
       <button class="btn btn-primary btn-sm" onclick="scrollToWizard()">Start Guided Tests</button>
+      <button class="btn btn-sm" onclick="scrollToBatteryTest()">Battery Timer</button>
       <button class="btn btn-sm" onclick="scrollToInstaller()">Silent App Installer</button>
       <button class="btn btn-pass btn-sm" id="btn-save-report" onclick="saveCompletedReport()">Save Completed Report</button>
       <button class="btn btn-sm" onclick="window.print()">Print / Save PDF</button>
@@ -613,6 +614,73 @@ input[type="text"], input[type="number"], select, textarea {
       <div class="prog-track"><div class="prog-fill" id="inst-bar-fill"></div></div>
       <div id="inst-results-list" class="btn-row" style="margin-bottom:8px;"></div>
       <div class="log-box" id="inst-log-box"></div>
+    </div>
+  </div>
+
+  <!-- Section 5: Real Timed Battery Endurance & Everyday Load Test -->
+  <div class="card" id="battery-test-card">
+    <h2>
+      <span>5. Real Timed Battery Endurance &amp; Everyday Use Test</span>
+      <span class="badge b-info" id="bat-drain-badge">Ready</span>
+    </h2>
+    <p class="no-print" style="margin:0 0 10px 0; color:var(--muted);">
+      Measures real unplugged battery drain over a set timer (or full drain to safety cutoff) to catch failing cells that jump percentages or shut down under everyday multitasking load.
+    </p>
+    <div class="form-grid no-print">
+      <label class="field">Timer Duration
+        <select id="bat-mins-preset" onchange="onBatPresetChange(this.value)">
+          <option value="5">5 min (Quick Buyer Check)</option>
+          <option value="15" selected>15 min (Standard Everyday Check)</option>
+          <option value="30">30 min (Extended Endurance)</option>
+          <option value="60">60 min (Deep Endurance)</option>
+          <option value="-1">Full Drain (Until Cutoff %)</option>
+          <option value="custom">Custom Minutes (1..240)</option>
+        </select>
+      </label>
+      <label class="field">Load Profile
+        <select id="bat-load-mode">
+          <option value="everyday" selected>Everyday Use (CPU/RAM/Disk/GPU Mix)</option>
+          <option value="light">Light (Display Awake Only)</option>
+          <option value="heavy">Heavy (Sustained High Load)</option>
+        </select>
+      </label>
+      <label class="field">Safety Cutoff (%)
+        <input type="number" id="bat-cutoff" min="5" max="50" value="10">
+      </label>
+    </div>
+    <div class="btn-row no-print" style="margin-top:10px; align-items:center;">
+      <label class="field" id="bat-custom-wrap" style="display:none; width:140px;">Custom Minutes
+        <input type="number" id="bat-custom-mins" min="1" max="240" value="20">
+      </label>
+      <button class="btn btn-primary btn-sm" id="btn-bat-start" onclick="startBatteryDrainTest()">Start Battery Timer</button>
+      <button class="btn btn-fail btn-sm" id="btn-bat-stop" style="display:none;" onclick="stopBatteryDrainTest()">Stop Early</button>
+      <button class="btn btn-sm" onclick="copyBatteryOneLiner()">Copy PS Timer Command</button>
+      <canvas id="bat-sim-canvas" width="180" height="30" style="display:none; border:1px solid var(--border); border-radius:6px; background:#0b1220;"></canvas>
+    </div>
+    <div id="bat-offline-note" class="alert alert-info no-print" style="display:none; margin-top:10px;">
+      Opened offline via <code>file://</code>. Live background battery drain requires running via the script server, or click <strong>Copy PS Timer Command</strong>.
+    </div>
+    <div id="bat-live-wrap" style="display:none; margin-top:12px;">
+      <div class="grid-4" style="margin-bottom:10px;">
+        <div class="lock-tile">
+          <div class="lock-tile-top"><span>Timer</span></div>
+          <div style="font-size:20px; font-weight:800;" id="bat-timer-val">--:--</div>
+        </div>
+        <div class="lock-tile">
+          <div class="lock-tile-top"><span>Charge</span></div>
+          <div style="font-size:20px; font-weight:800;" id="bat-pct-val">--%</div>
+        </div>
+        <div class="lock-tile">
+          <div class="lock-tile-top"><span>Draw &amp; Voltage</span></div>
+          <div style="font-size:15px; font-weight:700;" id="bat-power-val">-- W / -- mV</div>
+        </div>
+        <div class="lock-tile">
+          <div class="lock-tile-top"><span>Est. 100% Runtime</span></div>
+          <div style="font-size:16px; font-weight:800;" id="bat-est-val">Calculating...</div>
+        </div>
+      </div>
+      <div id="bat-summary-line" class="kpi-sub" style="margin-bottom:8px;"></div>
+      <canvas id="bat-chart" class="test-canvas" style="height:210px; max-width:100%;" width="820" height="210"></canvas>
     </div>
   </div>
 </div>
@@ -1000,6 +1068,7 @@ input[type="text"], input[type="number"], select, textarea {
   window.nextStep = function () { window.goToStep((currentStepIdx + 1) % STEPS.length); };
   window.prevStep = function () { window.goToStep((currentStepIdx - 1 + STEPS.length) % STEPS.length); };
   window.scrollToWizard = function () { document.getElementById('wizard-card').scrollIntoView({ behavior: 'smooth' }); };
+  window.scrollToBatteryTest = function () { document.getElementById('battery-test-card').scrollIntoView({ behavior: 'smooth' }); };
   window.scrollToInstaller = function () { document.getElementById('installer-card').scrollIntoView({ behavior: 'smooth' }); };
 
   window.setStepResult = function (val) {
@@ -1923,6 +1992,254 @@ input[type="text"], input[type="number"], select, textarea {
     }).catch(function () {});
   };
 
+  // ---- Section 5: Real Timed Battery Endurance Test ----
+  var batPollTimer = null;
+  var batSimRaf = null;
+
+  function fmtSecClock(sec) {
+    if (sec === null || sec === undefined || sec < 0) return 'Full Drain';
+    var m = Math.floor(sec / 60);
+    var s = Math.floor(sec % 60);
+    return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  window.onBatPresetChange = function (val) {
+    document.getElementById('bat-custom-wrap').style.display = (val === 'custom') ? 'flex' : 'none';
+  };
+
+  function getChosenBatParams() {
+    var p = document.getElementById('bat-mins-preset').value;
+    var mins = (p === 'custom') ? (parseInt(document.getElementById('bat-custom-mins').value, 10) || 15) : parseInt(p, 10);
+    var mode = document.getElementById('bat-load-mode').value || 'everyday';
+    var cut  = parseInt(document.getElementById('bat-cutoff').value, 10) || 10;
+    return { minutes: mins, mode: mode, cutoffPct: cut };
+  }
+
+  window.copyBatteryOneLiner = function () {
+    var pr = getChosenBatParams();
+    var cmd = "$env:LI_BAT_MINUTES='" + pr.minutes + "'; $env:LI_BAT_MODE='" + pr.mode + "'; $env:LI_BAT_CUTOFF='" + pr.cutoffPct + "'; $env:LI_BAT_ONLY='1'; irm is.gd/lapcheck | iex";
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(cmd).then(function () { showToast('Copied Battery Timer PowerShell command'); });
+    } else {
+      window.prompt('Copy Battery Timer command:', cmd);
+    }
+  };
+
+  function startEverydayBrowserSim() {
+    if (batSimRaf) return;
+    var cv = document.getElementById('bat-sim-canvas');
+    cv.style.display = 'block';
+    var ctx = cv.getContext('2d');
+    var x = 0;
+    var tick = function () {
+      if (!batSimRaf) return;
+      ctx.fillStyle = '#0b1220';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      for (var i = 0; i < 6; i++) {
+        var bx = (x * (i + 1) * 1.4) % (cv.width + 30) - 30;
+        ctx.fillStyle = ['#38bdf8', '#4ade80', '#fbbf24', '#f472b6', '#a78bfa', '#ffffff'][i];
+        ctx.fillRect(bx, 4 + i * 4, 24, 3);
+      }
+      x += 1.2;
+      batSimRaf = requestAnimationFrame(tick);
+    };
+    batSimRaf = requestAnimationFrame(tick);
+  }
+
+  function stopEverydayBrowserSim() {
+    if (batSimRaf) { cancelAnimationFrame(batSimRaf); batSimRaf = null; }
+    var cv = document.getElementById('bat-sim-canvas');
+    if (cv) cv.style.display = 'none';
+  }
+
+  function drawBatteryChart(samples) {
+    var cv = document.getElementById('bat-chart');
+    if (!cv) return;
+    var ctx = cv.getContext('2d');
+    var W = cv.width, H = cv.height;
+    ctx.fillStyle = '#0b1220';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 1;
+    for (var g = 1; g <= 4; g++) {
+      var gy = Math.round((H - 30) * (g / 4)) + 10;
+      ctx.beginPath(); ctx.moveTo(40, gy); ctx.lineTo(W - 15, gy); ctx.stroke();
+    }
+    var arr = toArr(samples);
+    if (arr.length === 0) return;
+
+    var maxT = Math.max(10, arr[arr.length - 1].ElapsedSec || 10);
+    var volts = arr.map(function (s) { return s.VoltageMv || 0; }).filter(function (v) { return v > 0; });
+    var minV = volts.length ? Math.min.apply(null, volts) - 200 : 9000;
+    var maxV = volts.length ? Math.max.apply(null, volts) + 200 : 13000;
+    if (maxV <= minV) maxV = minV + 500;
+
+    // Charge % line (green)
+    ctx.strokeStyle = '#4ade80';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    arr.forEach(function (s, idx) {
+      var px = 40 + ((s.ElapsedSec || 0) / maxT) * (W - 60);
+      var pct = (s.ChargePct !== null && s.ChargePct !== undefined) ? s.ChargePct : 0;
+      var py = (H - 22) - (pct / 100) * (H - 34);
+      if (idx === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    // Voltage mV line (amber)
+    if (volts.length > 0) {
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      var started = false;
+      arr.forEach(function (s) {
+        if (!s.VoltageMv) return;
+        var px = 40 + ((s.ElapsedSec || 0) / maxT) * (W - 60);
+        var py = (H - 22) - ((s.VoltageMv - minV) / (maxV - minV)) * (H - 34);
+        if (!started) { ctx.moveTo(px, py); started = true; } else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '11px Consolas, monospace';
+    ctx.fillText('100%', 4, 18);
+    ctx.fillText('0%', 12, H - 22);
+    ctx.fillText('Green: Charge %   |   Amber: Voltage mV   |   Elapsed: ' + fmtSecClock(maxT), 45, H - 6);
+  }
+
+  function renderBatteryDrainState(st) {
+    if (!st) return;
+    var wrap = document.getElementById('bat-live-wrap');
+    var badge = document.getElementById('bat-drain-badge');
+    var btnStart = document.getElementById('btn-bat-start');
+    var btnStop = document.getElementById('btn-bat-stop');
+
+    if (st.State === 'Idle' && !st.Summary && toArr(st.Samples).length === 0) return;
+    wrap.style.display = 'block';
+
+    if (st.Running) {
+      btnStart.disabled = true;
+      btnStop.style.display = 'inline-flex';
+      if (st.WaitingForUnplug) {
+        badge.className = 'badge b-warn';
+        badge.textContent = 'Unplug AC Charger to Begin...';
+      } else {
+        badge.className = 'badge b-info';
+        badge.textContent = 'Running (' + (st.LoadMode || 'everyday') + ')';
+        if (st.LoadMode === 'everyday') startEverydayBrowserSim();
+      }
+    } else {
+      btnStart.disabled = false;
+      btnStop.style.display = 'none';
+      stopEverydayBrowserSim();
+      if (batPollTimer) { clearInterval(batPollTimer); batPollTimer = null; }
+      var finSt = (st.Summary && st.Summary.Status) ? st.Summary.Status : st.State;
+      badge.className = 'badge ' + (finSt === 'PASS' ? 'b-pass' : (finSt === 'FAIL' ? 'b-fail' : 'b-warn'));
+      badge.textContent = finSt + (st.Summary && st.Summary.StopReason ? (' - ' + st.Summary.StopReason) : '');
+    }
+
+    var remTxt = st.WaitingForUnplug
+      ? 'Waiting AC Unplug'
+      : ((st.RemainingSeconds >= 0 && st.TargetMinutes > 0) ? ('Left ' + fmtSecClock(st.RemainingSeconds)) : ('Elap ' + fmtSecClock(st.ElapsedSeconds)));
+    document.getElementById('bat-timer-val').textContent = remTxt;
+
+    var cur = st.CurrentSample || {};
+    var sum = st.Summary || {};
+    var pctTxt = (cur.ChargePct !== null && cur.ChargePct !== undefined)
+      ? ((sum.StartPct !== null && sum.StartPct !== undefined ? (sum.StartPct + '% -> ') : '') + cur.ChargePct + '%')
+      : (sum.EndPct !== null && sum.EndPct !== undefined ? (sum.StartPct + '% -> ' + sum.EndPct + '%') : '--%');
+    document.getElementById('bat-pct-val').textContent = pctTxt;
+
+    var drawW = (sum.AvgDischargeWatts !== null && sum.AvgDischargeWatts !== undefined)
+      ? (sum.AvgDischargeWatts + ' W avg')
+      : ((cur.DischargeMw > 0) ? ((cur.DischargeMw / 1000).toFixed(1) + ' W') : '-- W');
+    var voltTxt = cur.VoltageMv ? (cur.VoltageMv + ' mV') : (sum.MinVoltageMv ? ('Min ' + sum.MinVoltageMv + ' mV') : '-- mV');
+    document.getElementById('bat-power-val').textContent = drawW + ' / ' + voltTxt;
+
+    var estTxt = (sum.EstimatedRuntimeFrom100Minutes !== null && sum.EstimatedRuntimeFrom100Minutes !== undefined)
+      ? ('~' + sum.EstimatedRuntimeFrom100Minutes + ' min (' + (sum.EstimatedRuntimeFrom100Minutes / 60).toFixed(1) + ' hrs)')
+      : 'Need >=1% drop or WMI rate';
+    document.getElementById('bat-est-val').textContent = estTxt;
+
+    if (st.Error) {
+      document.getElementById('bat-summary-line').textContent = st.Error;
+    } else if (sum.StopReason) {
+      document.getElementById('bat-summary-line').textContent =
+        'Elapsed: ' + (sum.ElapsedMinutes || 0) + ' min | Energy Used: ' + (sum.EnergyUsedMWh || 0) + ' mWh | Voltage Sag: ' + (sum.VoltageSagPct || 0) + '%' +
+        (sum.SuddenDropDetected ? (' | DEAD CELL DROP: ' + sum.SuddenDropDetail) : '');
+    }
+
+    drawBatteryChart(st.Samples);
+
+    if (!st.Running && st.Summary) {
+      reportData.BatteryDrain = st.Summary;
+      if (st.Summary.SuddenDropDetected && reportData.Scoring) {
+        var crit = toArr(reportData.Scoring.CriticalFlags);
+        if (crit.join('|').indexOf('Sudden battery') === -1) {
+          crit.push('Sudden battery charge collapse during timed drain (' + st.Summary.SuddenDropDetail + ')');
+          reportData.Scoring.CriticalFlags = crit;
+          reportData.Scoring.Verdict = 'DO NOT BUY';
+        }
+        renderTopAndScoring();
+      }
+    }
+  }
+
+  function pollBatteryDrainStatus() {
+    fetch('/api/battery-test/status').then(function (r) { return r.json(); }).then(function (st) {
+      renderBatteryDrainState(st);
+    }).catch(function () {});
+  }
+
+  window.startBatteryDrainTest = function () {
+    if (window.__LI_SERVER__ !== true) {
+      showToast('Offline HTML cannot run live drain loop. Use Copy PS Timer Command.');
+      return;
+    }
+    var pr = getChosenBatParams();
+    fetch('/api/battery-test/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pr)
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (!res || !res.ok) {
+        showToast((res && res.error) ? res.error : 'Could not start battery timer');
+        return;
+      }
+      showToast('Battery timer started (' + pr.mode + ' mode)');
+      if (batPollTimer) clearInterval(batPollTimer);
+      pollBatteryDrainStatus();
+      batPollTimer = setInterval(pollBatteryDrainStatus, 1500);
+    }).catch(function () { showToast('Battery timer start failed'); });
+  };
+
+  window.stopBatteryDrainTest = function () {
+    fetch('/api/battery-test/stop', { method: 'POST' }).then(function () {
+      showToast('Stopping battery test and saving summary...');
+    }).catch(function () {});
+  };
+
+  function renderInitialBatteryDrain() {
+    if (window.__LI_SERVER__ !== true) {
+      var off = document.getElementById('bat-offline-note');
+      if (off) off.style.display = 'block';
+    }
+    if (reportData.BatteryDrain) {
+      renderBatteryDrainState({
+        Running: false,
+        State: reportData.BatteryDrain.Status || 'Completed',
+        WaitingForUnplug: false,
+        LoadMode: reportData.BatteryDrain.LoadMode || 'everyday',
+        TargetMinutes: 0,
+        ElapsedSeconds: reportData.BatteryDrain.ElapsedSeconds || 0,
+        RemainingSeconds: 0,
+        Summary: reportData.BatteryDrain,
+        Samples: reportData.BatteryDrainSamples || []
+      });
+    }
+  }
+
   // Init
   try {
     var savedTheme = localStorage.getItem('li-theme');
@@ -1938,6 +2255,7 @@ input[type="text"], input[type="number"], select, textarea {
   renderWizardPills();
   renderTopAndScoring();
   renderInstallerSection();
+  renderInitialBatteryDrain();
 })();
 </script>
 </body>

@@ -104,10 +104,29 @@ function Start-ReportHttpServer {
     $installAsync = $null
     $installRunspace = $null
 
+    $batDrainState = [hashtable]::Synchronized(@{
+        Running          = $false
+        State            = 'Idle'
+        WaitingForUnplug = $false
+        LoadMode         = 'everyday'
+        TargetMinutes    = 15
+        CutoffPct        = 10
+        ElapsedSeconds   = 0
+        RemainingSeconds = 0
+        CancelRequested  = $false
+        Error            = ''
+        CurrentSample    = $null
+        Summary          = $null
+        Samples          = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+    })
+    $batDrainBg = $null
+    $batDrainAsync = $null
+    $batDrainRunspace = $null
+
     try {
         if (-not $NoLaunchBrowser) {
             Write-Host ("[+] Interactive Report Server running at {0}" -f $prefix) -ForegroundColor Green
-            Write-Host "    Complete interactive tests or silent app installs in browser, or press [Q] here to stop server." -ForegroundColor Gray
+            Write-Host "    Complete interactive tests, battery timer, or app installs in browser, or press [Q] here to stop server." -ForegroundColor Gray
             try { Start-Process $prefix | Out-Null } catch {}
         }
 
@@ -126,6 +145,14 @@ function Start-ReportHttpServer {
                 $installBg = $null
                 $installAsync = $null
                 $installRunspace = $null
+            }
+            if ($batDrainBg -and $batDrainAsync -and $batDrainAsync.IsCompleted) {
+                try { $batDrainBg.EndInvoke($batDrainAsync) | Out-Null } catch {}
+                try { $batDrainBg.Dispose() } catch {}
+                try { $batDrainRunspace.Close(); $batDrainRunspace.Dispose() } catch {}
+                $batDrainBg = $null
+                $batDrainAsync = $null
+                $batDrainRunspace = $null
             }
             try {
                 if (-not [Console]::IsInputRedirected -and [Console]::KeyAvailable) {
@@ -230,12 +257,93 @@ function Start-ReportHttpServer {
                 } elseif ($method -eq 'POST' -and $path -eq '/api/install/cancel') {
                     $installState.CancelRequested = $true
                     Send-HttpResponse -Context $ctx -StatusCode 200 -ContentType 'application/json; charset=utf-8' -Body '{"ok":true}'
+                } elseif ($method -eq 'GET' -and $path -eq '/api/battery-test/status') {
+                    $bSnap = [PSCustomObject]@{
+                        Running          = [bool]$batDrainState.Running
+                        State            = [string]$batDrainState.State
+                        WaitingForUnplug = [bool]$batDrainState.WaitingForUnplug
+                        LoadMode         = [string]$batDrainState.LoadMode
+                        TargetMinutes    = [int]$batDrainState.TargetMinutes
+                        CutoffPct        = [int]$batDrainState.CutoffPct
+                        ElapsedSeconds   = [int]$batDrainState.ElapsedSeconds
+                        RemainingSeconds = [int]$batDrainState.RemainingSeconds
+                        Error            = [string]$batDrainState.Error
+                        CurrentSample    = $batDrainState.CurrentSample
+                        Summary          = $batDrainState.Summary
+                        Samples          = @($batDrainState.Samples.ToArray())
+                    } | ConvertTo-Json -Depth 6 -Compress
+                    Send-HttpResponse -Context $ctx -StatusCode 200 -ContentType 'application/json; charset=utf-8' -Body $bSnap
+                } elseif ($method -eq 'POST' -and $path -eq '/api/battery-test/start') {
+                    if ($batDrainState.Running) {
+                        Send-HttpResponse -Context $ctx -StatusCode 409 -ContentType 'application/json; charset=utf-8' -Body '{"ok":false,"error":"A battery drain test is already running."}'
+                        continue
+                    }
+                    $sr = New-Object System.IO.StreamReader($req.InputStream, [System.Text.Encoding]::UTF8)
+                    $body = $sr.ReadToEnd()
+                    $sr.Dispose()
+                    $reqObj = $null
+                    try { $reqObj = $body | ConvertFrom-Json } catch {}
+                    if ($null -eq $reqObj) {
+                        Send-HttpResponse -Context $ctx -StatusCode 400 -ContentType 'application/json; charset=utf-8' -Body '{"ok":false,"error":"Invalid JSON payload"}'
+                        continue
+                    }
+
+                    $bMins = if ($null -ne $reqObj.minutes) { [int]$reqObj.minutes } else { 15 }
+                    $bMode = if ($reqObj.mode) { ([string]$reqObj.mode).Trim().ToLowerInvariant() } else { 'everyday' }
+                    $bCut  = if ($null -ne $reqObj.cutoffPct) { [int]$reqObj.cutoffPct } else { 10 }
+
+                    if (($bMins -lt -1 -or $bMins -eq 0 -or $bMins -gt 240) -or ($bMode -notin @('everyday', 'light', 'heavy')) -or ($bCut -lt 5 -or $bCut -gt 50)) {
+                        Send-HttpResponse -Context $ctx -StatusCode 400 -ContentType 'application/json; charset=utf-8' -Body '{"ok":false,"error":"Invalid battery test parameters (minutes=-1 or 1..240, mode=everyday|light|heavy, cutoffPct=5..50)."}'
+                        continue
+                    }
+
+                    $batsNow = @(Invoke-SafeCim -ClassName 'Win32_Battery')
+                    if ($batsNow.Count -eq 0) {
+                        Send-HttpResponse -Context $ctx -StatusCode 400 -ContentType 'application/json; charset=utf-8' -Body '{"ok":false,"error":"No battery detected on this machine."}'
+                        continue
+                    }
+
+                    $totCap = 0.0
+                    if ($ReportData.Battery -and $ReportData.Battery.Batteries) {
+                        foreach ($bb in @($ReportData.Battery.Batteries)) {
+                            if ($bb.FullChargeMWh -gt 0) { $totCap += [double]$bb.FullChargeMWh }
+                        }
+                    }
+
+                    $batDrainState.Running = $true
+                    $batDrainState.State = 'Starting'
+                    $batDrainState.CancelRequested = $false
+
+                    $issB = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+                    foreach ($fnName in @('Invoke-SafeCim','Get-CpuTempCelsius','Get-BatteryCheckpointPath','Clear-BatteryCheckpoint','Set-BatteryTestKeepAwake','Get-BatteryDischargeSample','Measure-BatteryDrainSummary','Invoke-EverydayTickWorkload','Invoke-TimedBatteryDrainTest')) {
+                        $fnDef = (Get-Command -Name $fnName -ErrorAction Stop).Definition
+                        $issB.Commands.Add((New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($fnName, $fnDef)))
+                    }
+                    $batDrainRunspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace($issB)
+                    $batDrainRunspace.Open()
+                    $batDrainBg = [PowerShell]::Create()
+                    $batDrainBg.Runspace = $batDrainRunspace
+                    [void]$batDrainBg.AddScript({
+                        param($Mins, $Cut, $Mode, $Cap, $SharedState)
+                        Invoke-TimedBatteryDrainTest -Minutes $Mins -CutoffPct $Cut -LoadMode $Mode -TotalCapacityMWh $Cap -ProgressState $SharedState | Out-Null
+                    }).AddArgument($bMins).AddArgument($bCut).AddArgument($bMode).AddArgument($totCap).AddArgument($batDrainState)
+                    $batDrainAsync = $batDrainBg.BeginInvoke()
+
+                    Send-HttpResponse -Context $ctx -StatusCode 202 -ContentType 'application/json; charset=utf-8' -Body '{"ok":true}'
+                } elseif ($method -eq 'POST' -and $path -eq '/api/battery-test/stop') {
+                    $batDrainState.CancelRequested = $true
+                    Send-HttpResponse -Context $ctx -StatusCode 200 -ContentType 'application/json; charset=utf-8' -Body '{"ok":true}'
                 } elseif ($method -eq 'POST' -and $path -eq '/api/save') {
                     $sr = New-Object System.IO.StreamReader($req.InputStream, [System.Text.Encoding]::UTF8)
                     $body = $sr.ReadToEnd()
                     $sr.Dispose()
                     if ([string]::IsNullOrWhiteSpace($body)) { $body = '{}' }
                     $currentManualJson = $body
+                    if ($null -ne $batDrainState.Summary) {
+                        $ReportData | Add-Member -NotePropertyName BatteryDrain -NotePropertyValue $batDrainState.Summary -Force
+                        $ReportData | Add-Member -NotePropertyName BatteryDrainSamples -NotePropertyValue @($batDrainState.Samples.ToArray()) -Force
+                        $ReportData.Scoring = Get-BuyerVerdict -ReportData $ReportData
+                    }
                     $offlineHtml = Build-ReportHtml -ReportData $ReportData -ManualStateJson $currentManualJson -ServerMode $false
                     Write-AtomicTextFile -Path $ReportPath -Content $offlineHtml
                     $ack = (@{ ok = $true; path = $ReportPath } | ConvertTo-Json -Compress)
@@ -276,6 +384,14 @@ function Start-ReportHttpServer {
         if ($installRunspace) {
             try { $installRunspace.Close(); $installRunspace.Dispose() } catch {}
         }
+        if ($batDrainBg) {
+            $batDrainState.CancelRequested = $true
+            try { $batDrainBg.Stop() } catch {}
+            try { $batDrainBg.Dispose() } catch {}
+        }
+        if ($batDrainRunspace) {
+            try { $batDrainRunspace.Close(); $batDrainRunspace.Dispose() } catch {}
+        }
         try { if ($listener.IsListening) { $listener.Stop() } } catch {}
         try { $listener.Close() } catch {}
     }
@@ -304,6 +420,8 @@ function Invoke-LaptopInspect {
             $InstallOnly -or
             $UpgradeAll -or
             $DryRun -or
+            $BatteryTestOnly -or
+            ($BatteryTestMinutes -ne 0) -or
             -not [string]::IsNullOrWhiteSpace($InstallPreset) -or
             ($InstallApps -and $InstallApps.Count -gt 0) -or
             ($PSBoundParameters.ContainsKey('StressSeconds'))
@@ -325,6 +443,9 @@ function Invoke-LaptopInspect {
                     }
                     'InstallerTui' {
                         Invoke-TuiSilentInstallerMenu
+                    }
+                    'BatteryTui' {
+                        Invoke-TuiBatteryDrainMenu
                     }
                     'FullAudit' {
                         break
@@ -365,9 +486,28 @@ function Invoke-LaptopInspect {
             -AppsFlag $InstallApps `
             -UpgradeAllFlag:$UpgradeAll `
             -InstallOnlyFlag:$InstallOnly `
-            -DryRunFlag:$DryRun
+            -DryRunFlag:$DryRun `
+            -BatMinutesFlag $BatteryTestMinutes `
+            -BatModeFlag $BatteryTestMode `
+            -BatCutoffFlag $BatteryCutoffPct `
+            -BatOnlyFlag:$BatteryTestOnly
         if ($elevatedStarted) {
             Write-Host "  [+] Elevated session started in new window. Exiting non-admin parent." -ForegroundColor Green
+            return
+        }
+
+        if ($BatteryTestOnly) {
+            $bMins = if ($BatteryTestMinutes -ne 0) { $BatteryTestMinutes } else { 15 }
+            Show-TuiHeader -IsAdmin $isAdmin -Subtitle ("Timed Battery Drain Test ({0} mode, cutoff {1}%)" -f $BatteryTestMode, $BatteryCutoffPct)
+            $bSum = Invoke-TimedBatteryDrainTest -Minutes $bMins -CutoffPct $BatteryCutoffPct -LoadMode $BatteryTestMode -ConsoleLive
+            Write-Host ""
+            Write-Host "  === Battery Endurance Summary ===" -ForegroundColor Cyan
+            Write-Host ("  Status       : {0} ({1})" -f $bSum.Status, $bSum.StopReason)
+            $dropTxt = if ($null -ne $bSum.StartPct) { ("{0}% -> {1}% (-{2}%)" -f $bSum.StartPct, $bSum.EndPct, $bSum.DropPct) } else { 'N/A' }
+            Write-Host ("  Elapsed      : {0} min | Drop: {1}" -f $bSum.ElapsedMinutes, $dropTxt)
+            if ($null -ne $bSum.EstimatedRuntimeFrom100Minutes) {
+                Write-Host ("  Est. 100->0% : ~{0} min ({1} hrs)" -f $bSum.EstimatedRuntimeFrom100Minutes, [Math]::Round($bSum.EstimatedRuntimeFrom100Minutes / 60.0, 1)) -ForegroundColor Green
+            }
             return
         }
 
@@ -387,6 +527,8 @@ function Invoke-LaptopInspect {
             }
             return
         }
+
+        $prevBatCrash = Get-UnfinishedBatteryCheckpoint
 
         $swTotal = [System.Diagnostics.Stopwatch]::StartNew()
         if ($showMenu -and (Test-InteractiveConsole)) { try { Clear-Host } catch {} }
@@ -452,6 +594,13 @@ function Invoke-LaptopInspect {
         Write-TuiStepStart -Index 9 -Total 9 -Title 'Scoring & HTML Report'
         $swTotal.Stop()
 
+        $batDrainResult = $null
+        if ($BatteryTestMinutes -ne 0 -and $batInfo.BatteryCount -gt 0) {
+            Write-Host ""
+            Write-Host ("  [+] Running Timed Battery Drain ({0} min, {1} mode, cutoff {2}%)..." -f $BatteryTestMinutes, $BatteryTestMode, $BatteryCutoffPct) -ForegroundColor Cyan
+            $batDrainResult = Invoke-TimedBatteryDrainTest -Minutes $BatteryTestMinutes -CutoffPct $BatteryCutoffPct -LoadMode $BatteryTestMode -ConsoleLive
+        }
+
         $reportObj = [PSCustomObject]@{
             Meta = [PSCustomObject]@{
                 ToolName        = $script:ToolName
@@ -463,21 +612,23 @@ function Invoke-LaptopInspect {
                 StressSeconds   = $StressSeconds
                 IsAdmin         = [bool]$isAdmin
             }
-            System        = $sysInfo
-            CorporateLock = $corpAudit
-            Cpu           = $cpuInfo
-            Gpu           = $gpuInfo
-            Ram           = $ramInfo
-            Storage       = $storInfo
-            Battery       = $batInfo
-            Peripherals   = $periphInfo
-            InitialPorts  = $portSnap
-            Installer     = [PSCustomObject]@{
+            System               = $sysInfo
+            CorporateLock        = $corpAudit
+            Cpu                  = $cpuInfo
+            Gpu                  = $gpuInfo
+            Ram                  = $ramInfo
+            Storage              = $storInfo
+            Battery              = $batInfo
+            PreviousBatteryCrash = $prevBatCrash
+            BatteryDrain         = $batDrainResult
+            Peripherals          = $periphInfo
+            InitialPorts         = $portSnap
+            Installer            = [PSCustomObject]@{
                 Winget  = (Get-WingetInfo)
                 Catalog = @(Get-AppCatalog)
                 Presets = @(Get-AppPresets)
             }
-            Scoring       = $null
+            Scoring              = $null
         }
 
         $reportObj.Scoring = Get-BuyerVerdict -ReportData $reportObj

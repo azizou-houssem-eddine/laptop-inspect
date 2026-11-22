@@ -25,13 +25,17 @@ param(
     [switch]$DryRun,
     [switch]$Menu,
     [switch]$NoMenu,
+    [int]$BatteryTestMinutes = 0,
+    [ValidateSet('everyday', 'light', 'heavy')][string]$BatteryTestMode = 'everyday',
+    [int]$BatteryCutoffPct = 10,
+    [switch]$BatteryTestOnly,
     [string]$CleanupTempPath = ''
 )
 
 $ErrorActionPreference = 'Continue'
 $script:SelfSource = $MyInvocation.MyCommand.Definition
 $script:ToolName = 'LaptopInspect'
-$script:ToolVersion = '1.2.0'
+$script:ToolVersion = '1.3.0'
 $script:RepoUrl = 'https://github.com/azizou-houssem-eddine/laptop-inspect'
 $script:ScriptStartTime = Get-Date
 
@@ -47,6 +51,10 @@ if ($env:LI_UPGRADE_ALL -eq '1') { $UpgradeAll = $true }
 if ($env:LI_DRY_RUN -eq '1') { $DryRun = $true }
 if ($env:LI_MENU -eq '1') { $Menu = $true }
 if ($env:LI_NO_MENU -eq '1') { $NoMenu = $true }
+if ($env:LI_BAT_ONLY -eq '1') { $BatteryTestOnly = $true }
+if ($env:LI_BAT_MINUTES -match '^-?\d+$') { $BatteryTestMinutes = [int]$env:LI_BAT_MINUTES }
+if ($env:LI_BAT_MODE -match '^(everyday|light|heavy)$') { $BatteryTestMode = $env:LI_BAT_MODE.ToLowerInvariant() }
+if ($env:LI_BAT_CUTOFF -match '^\d+$') { $BatteryCutoffPct = [int]$env:LI_BAT_CUTOFF }
 if (-not [string]::IsNullOrWhiteSpace($env:LI_INSTALL)) {
     $rawInst = $env:LI_INSTALL.Trim()
     if ($rawInst -match '^(essentials|office|tech|dev)$' -and [string]::IsNullOrWhiteSpace($InstallPreset)) {
@@ -63,6 +71,10 @@ if ([string]::IsNullOrWhiteSpace($OutDir) -and -not [string]::IsNullOrWhiteSpace
 if ($Quick) { $SkipStress = $true; $StressSeconds = 0 }
 if ($StressSeconds -lt 0) { $StressSeconds = 0 }
 if ($StressSeconds -gt 60) { $StressSeconds = 60 }
+if ($BatteryTestMinutes -lt -1) { $BatteryTestMinutes = -1 }
+if ($BatteryTestMinutes -gt 240) { $BatteryTestMinutes = 240 }
+if ($BatteryCutoffPct -lt 5) { $BatteryCutoffPct = 5 }
+if ($BatteryCutoffPct -gt 50) { $BatteryCutoffPct = 50 }
 
 function Test-IsAdmin {
     try {
@@ -174,6 +186,10 @@ function Request-OptionalElevation {
         [switch]$InstallOnlyFlag,
         [switch]$DryRunFlag,
         [switch]$MenuFlag,
+        [int]$BatMinutesFlag = 0,
+        [string]$BatModeFlag = 'everyday',
+        [int]$BatCutoffFlag = 10,
+        [switch]$BatOnlyFlag,
         [switch]$ForceElevate
     )
     if (Test-IsAdmin) { return $false }
@@ -225,6 +241,10 @@ function Request-OptionalElevation {
     if ($InstallOnlyFlag) { $argParts += '-InstallOnly' }
     if ($DryRunFlag) { $argParts += '-DryRun' }
     if ($MenuFlag) { $argParts += '-Menu' }
+    if ($BatMinutesFlag -ne 0) { $argParts += ('-BatteryTestMinutes {0}' -f $BatMinutesFlag) }
+    if ($BatModeFlag -and $BatModeFlag -ne 'everyday') { $argParts += ('-BatteryTestMode {0}' -f $BatModeFlag) }
+    if ($BatCutoffFlag -ne 10) { $argParts += ('-BatteryCutoffPct {0}' -f $BatCutoffFlag) }
+    if ($BatOnlyFlag) { $argParts += '-BatteryTestOnly' }
     if (-not [string]::IsNullOrWhiteSpace($TargetOutDir)) { $argParts += ('-OutDir "{0}"' -f $TargetOutDir) }
     if (-not [string]::IsNullOrWhiteSpace($tempPath)) { $argParts += ('-CleanupTempPath "{0}"' -f $tempPath) }
 
@@ -500,6 +520,7 @@ input[type="text"], input[type="number"], select, textarea {
     </div>
     <div class="btn-row">
       <button class="btn btn-primary btn-sm" onclick="scrollToWizard()">Start Guided Tests</button>
+      <button class="btn btn-sm" onclick="scrollToBatteryTest()">Battery Timer</button>
       <button class="btn btn-sm" onclick="scrollToInstaller()">Silent App Installer</button>
       <button class="btn btn-pass btn-sm" id="btn-save-report" onclick="saveCompletedReport()">Save Completed Report</button>
       <button class="btn btn-sm" onclick="window.print()">Print / Save PDF</button>
@@ -858,6 +879,73 @@ input[type="text"], input[type="number"], select, textarea {
       <div class="prog-track"><div class="prog-fill" id="inst-bar-fill"></div></div>
       <div id="inst-results-list" class="btn-row" style="margin-bottom:8px;"></div>
       <div class="log-box" id="inst-log-box"></div>
+    </div>
+  </div>
+
+  <!-- Section 5: Real Timed Battery Endurance & Everyday Load Test -->
+  <div class="card" id="battery-test-card">
+    <h2>
+      <span>5. Real Timed Battery Endurance &amp; Everyday Use Test</span>
+      <span class="badge b-info" id="bat-drain-badge">Ready</span>
+    </h2>
+    <p class="no-print" style="margin:0 0 10px 0; color:var(--muted);">
+      Measures real unplugged battery drain over a set timer (or full drain to safety cutoff) to catch failing cells that jump percentages or shut down under everyday multitasking load.
+    </p>
+    <div class="form-grid no-print">
+      <label class="field">Timer Duration
+        <select id="bat-mins-preset" onchange="onBatPresetChange(this.value)">
+          <option value="5">5 min (Quick Buyer Check)</option>
+          <option value="15" selected>15 min (Standard Everyday Check)</option>
+          <option value="30">30 min (Extended Endurance)</option>
+          <option value="60">60 min (Deep Endurance)</option>
+          <option value="-1">Full Drain (Until Cutoff %)</option>
+          <option value="custom">Custom Minutes (1..240)</option>
+        </select>
+      </label>
+      <label class="field">Load Profile
+        <select id="bat-load-mode">
+          <option value="everyday" selected>Everyday Use (CPU/RAM/Disk/GPU Mix)</option>
+          <option value="light">Light (Display Awake Only)</option>
+          <option value="heavy">Heavy (Sustained High Load)</option>
+        </select>
+      </label>
+      <label class="field">Safety Cutoff (%)
+        <input type="number" id="bat-cutoff" min="5" max="50" value="10">
+      </label>
+    </div>
+    <div class="btn-row no-print" style="margin-top:10px; align-items:center;">
+      <label class="field" id="bat-custom-wrap" style="display:none; width:140px;">Custom Minutes
+        <input type="number" id="bat-custom-mins" min="1" max="240" value="20">
+      </label>
+      <button class="btn btn-primary btn-sm" id="btn-bat-start" onclick="startBatteryDrainTest()">Start Battery Timer</button>
+      <button class="btn btn-fail btn-sm" id="btn-bat-stop" style="display:none;" onclick="stopBatteryDrainTest()">Stop Early</button>
+      <button class="btn btn-sm" onclick="copyBatteryOneLiner()">Copy PS Timer Command</button>
+      <canvas id="bat-sim-canvas" width="180" height="30" style="display:none; border:1px solid var(--border); border-radius:6px; background:#0b1220;"></canvas>
+    </div>
+    <div id="bat-offline-note" class="alert alert-info no-print" style="display:none; margin-top:10px;">
+      Opened offline via <code>file://</code>. Live background battery drain requires running via the script server, or click <strong>Copy PS Timer Command</strong>.
+    </div>
+    <div id="bat-live-wrap" style="display:none; margin-top:12px;">
+      <div class="grid-4" style="margin-bottom:10px;">
+        <div class="lock-tile">
+          <div class="lock-tile-top"><span>Timer</span></div>
+          <div style="font-size:20px; font-weight:800;" id="bat-timer-val">--:--</div>
+        </div>
+        <div class="lock-tile">
+          <div class="lock-tile-top"><span>Charge</span></div>
+          <div style="font-size:20px; font-weight:800;" id="bat-pct-val">--%</div>
+        </div>
+        <div class="lock-tile">
+          <div class="lock-tile-top"><span>Draw &amp; Voltage</span></div>
+          <div style="font-size:15px; font-weight:700;" id="bat-power-val">-- W / -- mV</div>
+        </div>
+        <div class="lock-tile">
+          <div class="lock-tile-top"><span>Est. 100% Runtime</span></div>
+          <div style="font-size:16px; font-weight:800;" id="bat-est-val">Calculating...</div>
+        </div>
+      </div>
+      <div id="bat-summary-line" class="kpi-sub" style="margin-bottom:8px;"></div>
+      <canvas id="bat-chart" class="test-canvas" style="height:210px; max-width:100%;" width="820" height="210"></canvas>
     </div>
   </div>
 </div>
@@ -1245,6 +1333,7 @@ input[type="text"], input[type="number"], select, textarea {
   window.nextStep = function () { window.goToStep((currentStepIdx + 1) % STEPS.length); };
   window.prevStep = function () { window.goToStep((currentStepIdx - 1 + STEPS.length) % STEPS.length); };
   window.scrollToWizard = function () { document.getElementById('wizard-card').scrollIntoView({ behavior: 'smooth' }); };
+  window.scrollToBatteryTest = function () { document.getElementById('battery-test-card').scrollIntoView({ behavior: 'smooth' }); };
   window.scrollToInstaller = function () { document.getElementById('installer-card').scrollIntoView({ behavior: 'smooth' }); };
 
   window.setStepResult = function (val) {
@@ -2168,6 +2257,254 @@ input[type="text"], input[type="number"], select, textarea {
     }).catch(function () {});
   };
 
+  // ---- Section 5: Real Timed Battery Endurance Test ----
+  var batPollTimer = null;
+  var batSimRaf = null;
+
+  function fmtSecClock(sec) {
+    if (sec === null || sec === undefined || sec < 0) return 'Full Drain';
+    var m = Math.floor(sec / 60);
+    var s = Math.floor(sec % 60);
+    return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  window.onBatPresetChange = function (val) {
+    document.getElementById('bat-custom-wrap').style.display = (val === 'custom') ? 'flex' : 'none';
+  };
+
+  function getChosenBatParams() {
+    var p = document.getElementById('bat-mins-preset').value;
+    var mins = (p === 'custom') ? (parseInt(document.getElementById('bat-custom-mins').value, 10) || 15) : parseInt(p, 10);
+    var mode = document.getElementById('bat-load-mode').value || 'everyday';
+    var cut  = parseInt(document.getElementById('bat-cutoff').value, 10) || 10;
+    return { minutes: mins, mode: mode, cutoffPct: cut };
+  }
+
+  window.copyBatteryOneLiner = function () {
+    var pr = getChosenBatParams();
+    var cmd = "$env:LI_BAT_MINUTES='" + pr.minutes + "'; $env:LI_BAT_MODE='" + pr.mode + "'; $env:LI_BAT_CUTOFF='" + pr.cutoffPct + "'; $env:LI_BAT_ONLY='1'; irm is.gd/lapcheck | iex";
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(cmd).then(function () { showToast('Copied Battery Timer PowerShell command'); });
+    } else {
+      window.prompt('Copy Battery Timer command:', cmd);
+    }
+  };
+
+  function startEverydayBrowserSim() {
+    if (batSimRaf) return;
+    var cv = document.getElementById('bat-sim-canvas');
+    cv.style.display = 'block';
+    var ctx = cv.getContext('2d');
+    var x = 0;
+    var tick = function () {
+      if (!batSimRaf) return;
+      ctx.fillStyle = '#0b1220';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      for (var i = 0; i < 6; i++) {
+        var bx = (x * (i + 1) * 1.4) % (cv.width + 30) - 30;
+        ctx.fillStyle = ['#38bdf8', '#4ade80', '#fbbf24', '#f472b6', '#a78bfa', '#ffffff'][i];
+        ctx.fillRect(bx, 4 + i * 4, 24, 3);
+      }
+      x += 1.2;
+      batSimRaf = requestAnimationFrame(tick);
+    };
+    batSimRaf = requestAnimationFrame(tick);
+  }
+
+  function stopEverydayBrowserSim() {
+    if (batSimRaf) { cancelAnimationFrame(batSimRaf); batSimRaf = null; }
+    var cv = document.getElementById('bat-sim-canvas');
+    if (cv) cv.style.display = 'none';
+  }
+
+  function drawBatteryChart(samples) {
+    var cv = document.getElementById('bat-chart');
+    if (!cv) return;
+    var ctx = cv.getContext('2d');
+    var W = cv.width, H = cv.height;
+    ctx.fillStyle = '#0b1220';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 1;
+    for (var g = 1; g <= 4; g++) {
+      var gy = Math.round((H - 30) * (g / 4)) + 10;
+      ctx.beginPath(); ctx.moveTo(40, gy); ctx.lineTo(W - 15, gy); ctx.stroke();
+    }
+    var arr = toArr(samples);
+    if (arr.length === 0) return;
+
+    var maxT = Math.max(10, arr[arr.length - 1].ElapsedSec || 10);
+    var volts = arr.map(function (s) { return s.VoltageMv || 0; }).filter(function (v) { return v > 0; });
+    var minV = volts.length ? Math.min.apply(null, volts) - 200 : 9000;
+    var maxV = volts.length ? Math.max.apply(null, volts) + 200 : 13000;
+    if (maxV <= minV) maxV = minV + 500;
+
+    // Charge % line (green)
+    ctx.strokeStyle = '#4ade80';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    arr.forEach(function (s, idx) {
+      var px = 40 + ((s.ElapsedSec || 0) / maxT) * (W - 60);
+      var pct = (s.ChargePct !== null && s.ChargePct !== undefined) ? s.ChargePct : 0;
+      var py = (H - 22) - (pct / 100) * (H - 34);
+      if (idx === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    // Voltage mV line (amber)
+    if (volts.length > 0) {
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      var started = false;
+      arr.forEach(function (s) {
+        if (!s.VoltageMv) return;
+        var px = 40 + ((s.ElapsedSec || 0) / maxT) * (W - 60);
+        var py = (H - 22) - ((s.VoltageMv - minV) / (maxV - minV)) * (H - 34);
+        if (!started) { ctx.moveTo(px, py); started = true; } else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '11px Consolas, monospace';
+    ctx.fillText('100%', 4, 18);
+    ctx.fillText('0%', 12, H - 22);
+    ctx.fillText('Green: Charge %   |   Amber: Voltage mV   |   Elapsed: ' + fmtSecClock(maxT), 45, H - 6);
+  }
+
+  function renderBatteryDrainState(st) {
+    if (!st) return;
+    var wrap = document.getElementById('bat-live-wrap');
+    var badge = document.getElementById('bat-drain-badge');
+    var btnStart = document.getElementById('btn-bat-start');
+    var btnStop = document.getElementById('btn-bat-stop');
+
+    if (st.State === 'Idle' && !st.Summary && toArr(st.Samples).length === 0) return;
+    wrap.style.display = 'block';
+
+    if (st.Running) {
+      btnStart.disabled = true;
+      btnStop.style.display = 'inline-flex';
+      if (st.WaitingForUnplug) {
+        badge.className = 'badge b-warn';
+        badge.textContent = 'Unplug AC Charger to Begin...';
+      } else {
+        badge.className = 'badge b-info';
+        badge.textContent = 'Running (' + (st.LoadMode || 'everyday') + ')';
+        if (st.LoadMode === 'everyday') startEverydayBrowserSim();
+      }
+    } else {
+      btnStart.disabled = false;
+      btnStop.style.display = 'none';
+      stopEverydayBrowserSim();
+      if (batPollTimer) { clearInterval(batPollTimer); batPollTimer = null; }
+      var finSt = (st.Summary && st.Summary.Status) ? st.Summary.Status : st.State;
+      badge.className = 'badge ' + (finSt === 'PASS' ? 'b-pass' : (finSt === 'FAIL' ? 'b-fail' : 'b-warn'));
+      badge.textContent = finSt + (st.Summary && st.Summary.StopReason ? (' - ' + st.Summary.StopReason) : '');
+    }
+
+    var remTxt = st.WaitingForUnplug
+      ? 'Waiting AC Unplug'
+      : ((st.RemainingSeconds >= 0 && st.TargetMinutes > 0) ? ('Left ' + fmtSecClock(st.RemainingSeconds)) : ('Elap ' + fmtSecClock(st.ElapsedSeconds)));
+    document.getElementById('bat-timer-val').textContent = remTxt;
+
+    var cur = st.CurrentSample || {};
+    var sum = st.Summary || {};
+    var pctTxt = (cur.ChargePct !== null && cur.ChargePct !== undefined)
+      ? ((sum.StartPct !== null && sum.StartPct !== undefined ? (sum.StartPct + '% -> ') : '') + cur.ChargePct + '%')
+      : (sum.EndPct !== null && sum.EndPct !== undefined ? (sum.StartPct + '% -> ' + sum.EndPct + '%') : '--%');
+    document.getElementById('bat-pct-val').textContent = pctTxt;
+
+    var drawW = (sum.AvgDischargeWatts !== null && sum.AvgDischargeWatts !== undefined)
+      ? (sum.AvgDischargeWatts + ' W avg')
+      : ((cur.DischargeMw > 0) ? ((cur.DischargeMw / 1000).toFixed(1) + ' W') : '-- W');
+    var voltTxt = cur.VoltageMv ? (cur.VoltageMv + ' mV') : (sum.MinVoltageMv ? ('Min ' + sum.MinVoltageMv + ' mV') : '-- mV');
+    document.getElementById('bat-power-val').textContent = drawW + ' / ' + voltTxt;
+
+    var estTxt = (sum.EstimatedRuntimeFrom100Minutes !== null && sum.EstimatedRuntimeFrom100Minutes !== undefined)
+      ? ('~' + sum.EstimatedRuntimeFrom100Minutes + ' min (' + (sum.EstimatedRuntimeFrom100Minutes / 60).toFixed(1) + ' hrs)')
+      : 'Need >=1% drop or WMI rate';
+    document.getElementById('bat-est-val').textContent = estTxt;
+
+    if (st.Error) {
+      document.getElementById('bat-summary-line').textContent = st.Error;
+    } else if (sum.StopReason) {
+      document.getElementById('bat-summary-line').textContent =
+        'Elapsed: ' + (sum.ElapsedMinutes || 0) + ' min | Energy Used: ' + (sum.EnergyUsedMWh || 0) + ' mWh | Voltage Sag: ' + (sum.VoltageSagPct || 0) + '%' +
+        (sum.SuddenDropDetected ? (' | DEAD CELL DROP: ' + sum.SuddenDropDetail) : '');
+    }
+
+    drawBatteryChart(st.Samples);
+
+    if (!st.Running && st.Summary) {
+      reportData.BatteryDrain = st.Summary;
+      if (st.Summary.SuddenDropDetected && reportData.Scoring) {
+        var crit = toArr(reportData.Scoring.CriticalFlags);
+        if (crit.join('|').indexOf('Sudden battery') === -1) {
+          crit.push('Sudden battery charge collapse during timed drain (' + st.Summary.SuddenDropDetail + ')');
+          reportData.Scoring.CriticalFlags = crit;
+          reportData.Scoring.Verdict = 'DO NOT BUY';
+        }
+        renderTopAndScoring();
+      }
+    }
+  }
+
+  function pollBatteryDrainStatus() {
+    fetch('/api/battery-test/status').then(function (r) { return r.json(); }).then(function (st) {
+      renderBatteryDrainState(st);
+    }).catch(function () {});
+  }
+
+  window.startBatteryDrainTest = function () {
+    if (window.__LI_SERVER__ !== true) {
+      showToast('Offline HTML cannot run live drain loop. Use Copy PS Timer Command.');
+      return;
+    }
+    var pr = getChosenBatParams();
+    fetch('/api/battery-test/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pr)
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (!res || !res.ok) {
+        showToast((res && res.error) ? res.error : 'Could not start battery timer');
+        return;
+      }
+      showToast('Battery timer started (' + pr.mode + ' mode)');
+      if (batPollTimer) clearInterval(batPollTimer);
+      pollBatteryDrainStatus();
+      batPollTimer = setInterval(pollBatteryDrainStatus, 1500);
+    }).catch(function () { showToast('Battery timer start failed'); });
+  };
+
+  window.stopBatteryDrainTest = function () {
+    fetch('/api/battery-test/stop', { method: 'POST' }).then(function () {
+      showToast('Stopping battery test and saving summary...');
+    }).catch(function () {});
+  };
+
+  function renderInitialBatteryDrain() {
+    if (window.__LI_SERVER__ !== true) {
+      var off = document.getElementById('bat-offline-note');
+      if (off) off.style.display = 'block';
+    }
+    if (reportData.BatteryDrain) {
+      renderBatteryDrainState({
+        Running: false,
+        State: reportData.BatteryDrain.Status || 'Completed',
+        WaitingForUnplug: false,
+        LoadMode: reportData.BatteryDrain.LoadMode || 'everyday',
+        TargetMinutes: 0,
+        ElapsedSeconds: reportData.BatteryDrain.ElapsedSeconds || 0,
+        RemainingSeconds: 0,
+        Summary: reportData.BatteryDrain,
+        Samples: reportData.BatteryDrainSamples || []
+      });
+    }
+  }
+
   // Init
   try {
     var savedTheme = localStorage.getItem('li-theme');
@@ -2183,6 +2520,7 @@ input[type="text"], input[type="number"], select, textarea {
   renderWizardPills();
   renderTopAndScoring();
   renderInstallerSection();
+  renderInitialBatteryDrain();
 })();
 </script>
 </body>
@@ -3853,6 +4191,512 @@ function Get-BatteryDiagnostics {
         Batteries            = @($batteries)
     }
 }
+
+function Get-BatteryCheckpointPath {
+    return (Join-Path $env:TEMP 'li_bat_drain_latest.json')
+}
+
+function Clear-BatteryCheckpoint {
+    $p = Get-BatteryCheckpointPath
+    if (Test-Path -LiteralPath $p) {
+        Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-UnfinishedBatteryCheckpoint {
+    $p = Get-BatteryCheckpointPath
+    if (-not (Test-Path -LiteralPath $p)) { return $null }
+    try {
+        $raw = Get-Content -LiteralPath $p -Raw -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+        $obj = $raw | ConvertFrom-Json
+        if ($obj -and $obj.State -eq 'Running' -and [int]$obj.Pid -ne $PID) {
+            return $obj
+        }
+    } catch {}
+    return $null
+}
+
+function Set-BatteryTestKeepAwake {
+    param([bool]$Enable = $true)
+    try {
+        if (-not ('LaptopInspectNativePower' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class LaptopInspectNativePower {
+    [DllImport("kernel32.dll")]
+    public static extern uint SetThreadExecutionState(uint esFlags);
+}
+'@ -ErrorAction Stop
+        }
+        $flags = if ($Enable) { [uint32]'0x80000003' } else { [uint32]'0x80000000' }
+        [void][LaptopInspectNativePower]::SetThreadExecutionState($flags)
+    } catch {}
+}
+
+function Get-BatteryDischargeSample {
+    param([double]$ElapsedSec = 0.0)
+
+    $wb = Invoke-SafeCim -ClassName 'Win32_Battery' | Select-Object -First 1
+    $bs = Invoke-SafeCim -Namespace 'root\wmi' -ClassName 'BatteryStatus' | Select-Object -First 1
+
+    $pct = if ($wb -and $null -ne $wb.EstimatedChargeRemaining) { [int]$wb.EstimatedChargeRemaining } else { $null }
+    $online = if ($bs) { [bool]$bs.PowerOnline } elseif ($wb) { ($wb.BatteryStatus -in @(2, 6, 7, 8, 9)) } else { $null }
+    $remMwh = if ($bs -and $null -ne $bs.RemainingCapacity -and $bs.RemainingCapacity -gt 0) { [int64]$bs.RemainingCapacity } else { $null }
+    $disMw = if ($bs -and $bs.Discharging -and $bs.DischargeRate -gt 0) { [int]$bs.DischargeRate } else { 0 }
+    $voltMv = if ($bs -and $bs.Voltage -gt 0) { [int]$bs.Voltage } elseif ($wb -and $wb.DesignVoltage -gt 0) { [int]$wb.DesignVoltage } else { $null }
+
+    $tempC = $null
+    if (Get-Command -Name 'Get-CpuTempCelsius' -ErrorAction SilentlyContinue) {
+        $tempC = Get-CpuTempCelsius
+    }
+
+    return [PSCustomObject]@{
+        Timestamp    = (Get-Date).ToString('HH:mm:ss')
+        ElapsedSec   = [Math]::Round($ElapsedSec, 1)
+        ChargePct    = $pct
+        PowerOnline  = $online
+        RemainingMWh = $remMwh
+        DischargeMw  = $disMw
+        VoltageMv    = $voltMv
+        TempC        = $tempC
+    }
+}
+
+function Measure-BatteryDrainSummary {
+    param(
+        [array]$Samples = @(),
+        [double]$TotalCapacityMWh = 0,
+        [string]$LoadMode = 'everyday',
+        [string]$StopReason = 'Completed'
+    )
+
+    $arr = @($Samples | Where-Object { $null -ne $_ })
+    if ($arr.Count -eq 0) {
+        return [PSCustomObject]@{
+            Status                        = 'UNAVAILABLE'
+            StopReason                    = $StopReason
+            LoadMode                      = $LoadMode
+            SampleCount                   = 0
+            ElapsedSeconds                = 0
+            ElapsedMinutes                = 0
+            StartPct                      = $null
+            EndPct                        = $null
+            DropPct                       = 0
+            StartMWh                      = $null
+            EndMWh                        = $null
+            EnergyUsedMWh                 = 0
+            AvgDischargeWatts             = $null
+            PeakDischargeWatts            = $null
+            StartVoltageMv                = $null
+            MinVoltageMv                  = $null
+            VoltageSagPct                 = 0.0
+            SuddenDropDetected            = $false
+            SuddenDropDetail              = ''
+            EstimatedRuntimeFrom100Minutes = $null
+        }
+    }
+
+    $first = $arr[0]
+    $last  = $arr[$arr.Count - 1]
+    $elapsedSec = [Math]::Max(0.0, ([double]$last.ElapsedSec - [double]$first.ElapsedSec))
+    $elapsedMin = [Math]::Round($elapsedSec / 60.0, 2)
+
+    $startPct = $first.ChargePct
+    $endPct   = $last.ChargePct
+    $dropPct  = if ($null -ne $startPct -and $null -ne $endPct) { [Math]::Max(0, [int]$startPct - [int]$endPct) } else { 0 }
+
+    $startMwh = $first.RemainingMWh
+    $endMwh   = $last.RemainingMWh
+    $usedMwh  = if ($null -ne $startMwh -and $null -ne $endMwh) { [Math]::Max(0, [int64]$startMwh - [int64]$endMwh) } else { 0 }
+
+    $posRates = @($arr | Where-Object { $null -ne $_.DischargeMw -and $_.DischargeMw -gt 0 } | Select-Object -ExpandProperty DischargeMw)
+    $avgWatts = $null
+    $peakWatts = $null
+    if ($posRates.Count -gt 0) {
+        $avgMw = ($posRates | Measure-Object -Average).Average
+        $maxMw = ($posRates | Measure-Object -Maximum).Maximum
+        $avgWatts  = [Math]::Round($avgMw / 1000.0, 2)
+        $peakWatts = [Math]::Round($maxMw / 1000.0, 2)
+    } elseif ($usedMwh -gt 0 -and $elapsedSec -ge 10) {
+        $avgWatts = [Math]::Round(($usedMwh / ($elapsedSec / 3600.0)) / 1000.0, 2)
+        $peakWatts = $avgWatts
+    }
+
+    $volts = @($arr | Where-Object { $null -ne $_.VoltageMv -and $_.VoltageMv -gt 0 } | Select-Object -ExpandProperty VoltageMv)
+    $startVolt = $first.VoltageMv
+    $minVolt = if ($volts.Count -gt 0) { ($volts | Measure-Object -Minimum).Minimum } else { $null }
+    $maxVolt = if ($volts.Count -gt 0) { ($volts | Measure-Object -Maximum).Maximum } else { $null }
+    $sagPct = 0.0
+    if ($null -ne $maxVolt -and $null -ne $minVolt -and $maxVolt -gt 0) {
+        $sagPct = [Math]::Round((($maxVolt - $minVolt) / [double]$maxVolt) * 100.0, 1)
+    }
+
+    $suddenDrop = $false
+    $suddenDetail = ''
+    for ($i = 1; $i -lt $arr.Count; $i++) {
+        $p = $arr[$i - 1]
+        $c = $arr[$i]
+        if ($null -ne $p.ChargePct -and $null -ne $c.ChargePct) {
+            $dt = [double]$c.ElapsedSec - [double]$p.ElapsedSec
+            $dp = [int]$p.ChargePct - [int]$c.ChargePct
+            if ($dt -le 30.0 -and $dp -ge 5) {
+                $suddenDrop = $true
+                $suddenDetail = ("{0}% -> {1}% in {2}s" -f $p.ChargePct, $c.ChargePct, [int][Math]::Round($dt))
+                break
+            }
+        }
+    }
+
+    $estFullMin = $null
+    if ($TotalCapacityMWh -gt 0 -and $null -ne $avgWatts -and $avgWatts -gt 0.5) {
+        $estFullMin = [int][Math]::Round(($TotalCapacityMWh / ($avgWatts * 1000.0)) * 60.0)
+    } elseif ($dropPct -ge 1 -and $elapsedMin -gt 0) {
+        $estFullMin = [int][Math]::Round(($elapsedMin / [double]$dropPct) * 100.0)
+    }
+
+    $status = if ($suddenDrop) {
+        'FAIL'
+    } elseif ($sagPct -gt 15.0 -or ($LoadMode -in @('everyday', 'light') -and $null -ne $estFullMin -and $estFullMin -lt 90)) {
+        'WARN'
+    } elseif ($StopReason -match '^Aborted') {
+        'WARN'
+    } else {
+        'PASS'
+    }
+
+    return [PSCustomObject]@{
+        Status                         = $status
+        StopReason                     = $StopReason
+        LoadMode                       = $LoadMode
+        SampleCount                    = $arr.Count
+        ElapsedSeconds                 = [int][Math]::Round($elapsedSec)
+        ElapsedMinutes                 = $elapsedMin
+        StartPct                       = $startPct
+        EndPct                         = $endPct
+        DropPct                        = $dropPct
+        StartMWh                       = $startMwh
+        EndMWh                         = $endMwh
+        EnergyUsedMWh                  = $usedMwh
+        AvgDischargeWatts              = $avgWatts
+        PeakDischargeWatts             = $peakWatts
+        StartVoltageMv                 = $startVolt
+        MinVoltageMv                   = $minVolt
+        VoltageSagPct                  = $sagPct
+        SuddenDropDetected             = $suddenDrop
+        SuddenDropDetail               = $suddenDetail
+        EstimatedRuntimeFrom100Minutes = $estFullMin
+    }
+}
+
+function Invoke-EverydayTickWorkload {
+    param(
+        [byte[]]$WorkBuffer,
+        [int]$TickIndex = 0,
+        [string]$IoTempPath = ''
+    )
+
+    # 1. Touch 32MB memory working set across 4KB pages
+    if ($WorkBuffer -and $WorkBuffer.Length -ge 4096) {
+        $val = [byte](($TickIndex * 17) -band 0xFF)
+        for ($off = 0; $off -lt $WorkBuffer.Length; $off += 4096) {
+            $WorkBuffer[$off] = $val
+        }
+    }
+
+    # 2. ~180ms burst of SHA-256 + floating point + JSON work (simulates browser/office bursts)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $b = [System.Text.Encoding]::ASCII.GetBytes("EverydayBurst-$TickIndex")
+        for ($i = 0; $i -lt 450; $i++) { $b = $sha.ComputeHash($b) }
+        $acc = 0.0
+        for ($k = 1; $k -le 4000; $k++) {
+            $acc += [Math]::Sqrt($k * 1.13) * [Math]::Sin($k * 0.021)
+        }
+        $obj = @{ idx = $TickIndex; sum = [Math]::Round($acc, 3); items = @(1..30) } | ConvertTo-Json -Compress
+        $null = $obj | ConvertFrom-Json
+    } finally {
+        $sha.Dispose()
+    }
+
+    # 3. Every 4th tick (~20s), write & read 4MB temp file to simulate browser/app disk cache I/O
+    if (-not [string]::IsNullOrWhiteSpace($IoTempPath) -and (($TickIndex % 4) -eq 0)) {
+        try {
+            $ioBlock = New-Object byte[] (4MB)
+            $ioBlock[0] = [byte]($TickIndex -band 0xFF)
+            [System.IO.File]::WriteAllBytes($IoTempPath, $ioBlock)
+            $null = [System.IO.File]::ReadAllBytes($IoTempPath)
+        } catch {}
+    }
+}
+
+function Invoke-TimedBatteryDrainTest {
+    param(
+        [int]$Minutes = 15,
+        [int]$CutoffPct = 10,
+        [ValidateSet('everyday', 'light', 'heavy')][string]$LoadMode = 'everyday',
+        [int]$WaitForUnplugSeconds = 60,
+        [hashtable]$ProgressState = $null,
+        [switch]$ConsoleLive,
+        [double]$TotalCapacityMWh = 0
+    )
+
+    if ($Minutes -lt -1) { $Minutes = -1 }
+    if ($Minutes -eq 0) { $Minutes = 15 }
+    if ($Minutes -gt 240) { $Minutes = 240 }
+    if ($CutoffPct -lt 5) { $CutoffPct = 5 }
+    if ($CutoffPct -gt 50) { $CutoffPct = 50 }
+
+    $bats = @(Invoke-SafeCim -ClassName 'Win32_Battery')
+    if ($bats.Count -eq 0) {
+        $emptySum = Measure-BatteryDrainSummary -Samples @() -LoadMode $LoadMode -StopReason 'No battery detected'
+        if ($ProgressState) {
+            $ProgressState.Running = $false
+            $ProgressState.State = 'Unavailable'
+            $ProgressState.Error = 'No battery detected on this system.'
+            $ProgressState.Summary = $emptySum
+        }
+        return $emptySum
+    }
+
+    if ($TotalCapacityMWh -le 0) {
+        $wmiFull = Invoke-SafeCim -Namespace 'root\wmi' -ClassName 'BatteryFullChargedCapacity' | Select-Object -First 1
+        if ($wmiFull -and $wmiFull.FullChargedCapacity -gt 0) {
+            $TotalCapacityMWh = [double]$wmiFull.FullChargedCapacity
+        }
+    }
+
+    $chkPath = Get-BatteryCheckpointPath
+    $ioTempPath = Join-Path $env:TEMP ("li_everyday_io_{0}.tmp" -f $PID)
+    $workBuf = $null
+    $heavyPool = $null
+    $heavyHandles = @()
+    $heavyCtrl = [hashtable]::Synchronized(@{ Stop = $false })
+
+    $samples = New-Object System.Collections.ArrayList
+    $stopReason = 'Completed'
+    $startedAtStr = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+
+    if ($ProgressState) {
+        $ProgressState.Running = $true
+        $ProgressState.State = 'WaitingForUnplug'
+        $ProgressState.WaitingForUnplug = $true
+        $ProgressState.LoadMode = $LoadMode
+        $ProgressState.TargetMinutes = $Minutes
+        $ProgressState.CutoffPct = $CutoffPct
+        $ProgressState.ElapsedSeconds = 0
+        $ProgressState.RemainingSeconds = if ($Minutes -gt 0) { $Minutes * 60 } else { -1 }
+        $ProgressState.CancelRequested = $false
+        $ProgressState.Error = ''
+        $ProgressState.Summary = $null
+        $ProgressState.Samples.Clear()
+    }
+
+    try {
+        Set-BatteryTestKeepAwake -Enable $true
+
+        # Step 1: Wait until charger is unplugged
+        $waitSw = [System.Diagnostics.Stopwatch]::StartNew()
+        $initSample = Get-BatteryDischargeSample -ElapsedSec 0
+        while ($initSample.PowerOnline -eq $true) {
+            if ($ProgressState -and $ProgressState.CancelRequested) {
+                $stopReason = 'Canceled while waiting for charger unplug'
+                break
+            }
+            if ($ConsoleLive) {
+                try {
+                    if (-not [Console]::IsInputRedirected -and [Console]::KeyAvailable) {
+                        $rk = [Console]::ReadKey($true)
+                        if ($rk.Key -eq [ConsoleKey]::Q -or $rk.Key -eq [ConsoleKey]::Escape) {
+                            $stopReason = 'Canceled by user'
+                            break
+                        }
+                    }
+                } catch {}
+                $remWait = [Math]::Max(0, $WaitForUnplugSeconds - [int]$waitSw.Elapsed.TotalSeconds)
+                Write-Host ("`r  [WAIT] Charger is plugged in ({0}%). Unplug AC adapter to start timer ({1}s, Q=Cancel)... " -f $initSample.ChargePct, $remWait) -NoNewline -ForegroundColor Yellow
+            }
+            if ($waitSw.Elapsed.TotalSeconds -ge $WaitForUnplugSeconds) {
+                $stopReason = 'Aborted: Charger remained plugged in'
+                break
+            }
+            Start-Sleep -Milliseconds 1000
+            $initSample = Get-BatteryDischargeSample -ElapsedSec 0
+        }
+        if ($ConsoleLive -and $waitSw.Elapsed.TotalSeconds -gt 0.2) { Write-Host '' }
+
+        if ($stopReason -ne 'Completed') {
+            $abortedSum = Measure-BatteryDrainSummary -Samples @($initSample) -TotalCapacityMWh $TotalCapacityMWh -LoadMode $LoadMode -StopReason $stopReason
+            if ($ProgressState) {
+                $ProgressState.Running = $false
+                $ProgressState.WaitingForUnplug = $false
+                $ProgressState.State = 'Aborted'
+                $ProgressState.Summary = $abortedSum
+            }
+            return $abortedSum
+        }
+
+        if ($ProgressState) {
+            $ProgressState.WaitingForUnplug = $false
+            $ProgressState.State = 'Running'
+        }
+
+        # Step 2: Start selected workload
+        if ($LoadMode -eq 'everyday') {
+            $workBuf = New-Object byte[] (32MB)
+        } elseif ($LoadMode -eq 'heavy') {
+            $threads = [Math]::Max(1, [Environment]::ProcessorCount)
+            $heavyPool = [RunspaceFactory]::CreateRunspacePool(1, $threads)
+            $heavyPool.Open()
+            $heavyWorker = {
+                param($Ctrl)
+                $sha = [System.Security.Cryptography.SHA256]::Create()
+                $seed = [System.Text.Encoding]::ASCII.GetBytes('HeavyBatteryDrain')
+                try {
+                    while (-not $Ctrl.Stop) {
+                        $b = $seed
+                        for ($i = 0; $i -lt 250; $i++) { $b = $sha.ComputeHash($b) }
+                        Start-Sleep -Milliseconds 80
+                    }
+                } finally {
+                    $sha.Dispose()
+                }
+            }
+            for ($t = 0; $t -lt $threads; $t++) {
+                $ps = [PowerShell]::Create()
+                $ps.RunspacePool = $heavyPool
+                [void]$ps.AddScript($heavyWorker).AddArgument($heavyCtrl)
+                $heavyHandles += [PSCustomObject]@{ Ps = $ps; Async = $ps.BeginInvoke() }
+            }
+        }
+
+        # Step 3: Timed sampling loop
+        $drainSw = [System.Diagnostics.Stopwatch]::StartNew()
+        $targetSec = if ($Minutes -gt 0) { $Minutes * 60.0 } else { [double]::MaxValue }
+        $nextSampleSec = 0.0
+        $nextCheckpointSec = 15.0
+        $tickIdx = 0
+
+        while ($true) {
+            $elapsed = $drainSw.Elapsed.TotalSeconds
+            if ($ProgressState -and $ProgressState.CancelRequested) {
+                $stopReason = 'Stopped Early by User'
+                break
+            }
+            if ($ConsoleLive) {
+                try {
+                    if (-not [Console]::IsInputRedirected -and [Console]::KeyAvailable) {
+                        $rk = [Console]::ReadKey($true)
+                        if ($rk.Key -eq [ConsoleKey]::Q -or $rk.Key -eq [ConsoleKey]::Escape) {
+                            $stopReason = 'Stopped Early by User'
+                            break
+                        }
+                    }
+                } catch {}
+            }
+
+            if ($elapsed -ge $nextSampleSec) {
+                $samp = Get-BatteryDischargeSample -ElapsedSec $elapsed
+                [void]$samples.Add($samp)
+                if ($ProgressState) {
+                    $ProgressState.CurrentSample = $samp
+                    [void]$ProgressState.Samples.Add($samp)
+                }
+
+                if ($samp.PowerOnline -eq $true -and $samples.Count -gt 1) {
+                    $stopReason = 'Aborted: Charger Reconnected'
+                    break
+                }
+                if ($null -ne $samp.ChargePct -and $samp.ChargePct -le $CutoffPct) {
+                    $stopReason = ("Completed: Safety Cutoff Reached ({0}%)" -f $CutoffPct)
+                    break
+                }
+                $nextSampleSec = $elapsed + 5.0
+            }
+
+            $remSec = if ($Minutes -gt 0) { [Math]::Max(0, [int][Math]::Ceiling($targetSec - $elapsed)) } else { -1 }
+            if ($ProgressState) {
+                $ProgressState.ElapsedSeconds = [int][Math]::Floor($elapsed)
+                $ProgressState.RemainingSeconds = $remSec
+                if ($samples.Count -ge 2) {
+                    $ProgressState.Summary = Measure-BatteryDrainSummary -Samples $samples.ToArray() -TotalCapacityMWh $TotalCapacityMWh -LoadMode $LoadMode -StopReason 'Running'
+                }
+            }
+
+            if ($ConsoleLive) {
+                $curS = $samples[$samples.Count - 1]
+                $wNow = if ($curS.DischargeMw -gt 0) { [Math]::Round($curS.DischargeMw / 1000.0, 1) } else { 0.0 }
+                $vNow = if ($curS.VoltageMv) { "$($curS.VoltageMv)mV" } else { 'N/A' }
+                $timerTxt = if ($Minutes -gt 0) {
+                    $tsRem = [TimeSpan]::FromSeconds($remSec)
+                    "Left: $($tsRem.ToString('mm\:ss'))"
+                } else {
+                    $tsEl = [TimeSpan]::FromSeconds([int]$elapsed)
+                    "Elapsed: $($tsEl.ToString('hh\:mm\:ss'))"
+                }
+                Write-Host ("`r  [{0}] {1} | Bat: {2}% | Draw: {3}W | {4} | [Q]=Stop   " -f $LoadMode.ToUpperInvariant(), $timerTxt, $curS.ChargePct, $wNow, $vNow) -NoNewline -ForegroundColor Cyan
+            }
+
+            if ($Minutes -gt 0 -and $elapsed -ge $targetSec) {
+                $stopReason = ("Completed ({0} min timer)" -f $Minutes)
+                break
+            }
+
+            if ($elapsed -ge $nextCheckpointSec -and $samples.Count -gt 0) {
+                try {
+                    $lastS = $samples[$samples.Count - 1]
+                    $chkObj = @{
+                        Pid            = $PID
+                        State          = 'Running'
+                        StartedAt      = $startedAtStr
+                        LastUpdated    = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+                        LoadMode       = $LoadMode
+                        ElapsedSeconds = [int][Math]::Floor($elapsed)
+                        LastChargePct  = $lastS.ChargePct
+                        LastVoltageMv  = $lastS.VoltageMv
+                        Samples        = @($samples.ToArray())
+                    } | ConvertTo-Json -Depth 6 -Compress
+                    [System.IO.File]::WriteAllText($chkPath, $chkObj, [System.Text.Encoding]::ASCII)
+                } catch {}
+                $nextCheckpointSec = $elapsed + 15.0
+            }
+
+            $tickIdx++
+            if ($LoadMode -eq 'everyday') {
+                Invoke-EverydayTickWorkload -WorkBuffer $workBuf -TickIndex $tickIdx -IoTempPath $ioTempPath
+                Start-Sleep -Milliseconds 900
+            } else {
+                Start-Sleep -Milliseconds 1000
+            }
+        }
+        if ($ConsoleLive) { Write-Host '' }
+
+        $finalSummary = Measure-BatteryDrainSummary -Samples $samples.ToArray() -TotalCapacityMWh $TotalCapacityMWh -LoadMode $LoadMode -StopReason $stopReason
+        if ($ProgressState) {
+            $ProgressState.Running = $false
+            $ProgressState.State = if ($stopReason -match '^Aborted|^Canceled|^Stopped') { 'Stopped' } else { 'Completed' }
+            $ProgressState.Summary = $finalSummary
+        }
+        Clear-BatteryCheckpoint
+        return $finalSummary
+    } finally {
+        $heavyCtrl.Stop = $true
+        foreach ($hh in $heavyHandles) {
+            try { [void]$hh.Async.AsyncWaitHandle.WaitOne(2000); $hh.Ps.EndInvoke($hh.Async) | Out-Null } catch {}
+            try { $hh.Ps.Dispose() } catch {}
+        }
+        if ($heavyPool) {
+            try { $heavyPool.Close(); $heavyPool.Dispose() } catch {}
+        }
+        $workBuf = $null
+        if (Test-Path -LiteralPath $ioTempPath) {
+            Remove-Item -LiteralPath $ioTempPath -Force -ErrorAction SilentlyContinue
+        }
+        Set-BatteryTestKeepAwake -Enable $false
+        [GC]::Collect()
+    }
+}
 # --- END 50-battery-power.ps1 ---
 
 # --- BEGIN 60-peripherals.ps1 ---
@@ -4736,6 +5580,32 @@ function Get-BuyerVerdict {
         }
     }
 
+    # 6b. Real Timed Battery Drain & Unfinished Crash Checkpoint Rules
+    if ($ReportData.PSObject.Properties.Name -contains 'PreviousBatteryCrash' -and $null -ne $ReportData.PreviousBatteryCrash) {
+        $prev = $ReportData.PreviousBatteryCrash
+        $score -= 35
+        $criticalFlags += ("Unfinished battery drain checkpoint detected (powered off unexpectedly around {0}% after {1}s on {2} load)" -f $prev.LastChargePct, $prev.ElapsedSeconds, $prev.LoadMode)
+        $deductions += '-35: Previous battery hard shutdown'
+    }
+    if ($ReportData.PSObject.Properties.Name -contains 'BatteryDrain' -and $null -ne $ReportData.BatteryDrain) {
+        $bd = $ReportData.BatteryDrain
+        if ($bd.SuddenDropDetected) {
+            $score -= 35
+            $criticalFlags += ("Sudden battery charge collapse during timed drain ({0})" -f $bd.SuddenDropDetail)
+            $deductions += '-35: Sudden battery % drop'
+        }
+        if ($null -ne $bd.VoltageSagPct -and $bd.VoltageSagPct -gt 15.0) {
+            $score -= 15
+            $warnings += ("High battery voltage sag ({0}%) under {1} load" -f $bd.VoltageSagPct, $bd.LoadMode)
+            $deductions += '-15: High battery voltage sag'
+        }
+        if ($bd.LoadMode -in @('everyday', 'light') -and $null -ne $bd.EstimatedRuntimeFrom100Minutes -and $bd.EstimatedRuntimeFrom100Minutes -lt 90) {
+            $score -= 15
+            $warnings += ("Short estimated battery runtime (~{0} min from 100%) under {1} use" -f $bd.EstimatedRuntimeFrom100Minutes, $bd.LoadMode)
+            $deductions += '-15: Short real battery runtime (<90m)'
+        }
+    }
+
     # 7. Device Manager Errors
     if ($per -and $per.DeviceErrors) {
         $actErrs = @($per.DeviceErrors | Where-Object { -not $_.IsDisabled })
@@ -5243,6 +6113,91 @@ function Invoke-TuiAppChecklistPicker {
     }
 }
 
+function Invoke-TuiBatteryDrainMenu {
+    if (-not (Test-InteractiveConsole)) { return }
+    $modes = @('everyday', 'light', 'heavy')
+    $modeIdx = 0
+    $cutoff = 10
+
+    while ($true) {
+        $curMode = $modes[$modeIdx]
+        $curSamp = Get-BatteryDischargeSample -ElapsedSec 0
+        try { Clear-Host } catch {}
+        Show-TuiHeader -Subtitle 'Real Timed Battery Endurance & Everyday Load Simulator'
+
+        if ($null -eq $curSamp.ChargePct) {
+            Write-Host ''
+            Write-Host '  [!] No battery detected on this system.' -ForegroundColor Red
+            Write-Host ''
+            Read-Host '  Press Enter to return to Main Menu' | Out-Null
+            return
+        }
+
+        $acState = if ($curSamp.PowerOnline) { 'Plugged In (Unplug AC before starting)' } else { 'On Battery (Ready)' }
+        $acCol = if ($curSamp.PowerOnline) { 'Yellow' } else { 'Green' }
+        Write-Host ("  Battery Now : {0}%  |  Voltage: {1} mV  |  AC: " -f $curSamp.ChargePct, $(if ($curSamp.VoltageMv) { $curSamp.VoltageMv } else { 'N/A' })) -NoNewline -ForegroundColor White
+        Write-Host $acState -ForegroundColor $acCol
+        Write-Host ("  Load Profile: {0}  |  Safety Cutoff: {1}%  ([M]=Cycle Load)" -f $curMode.ToUpperInvariant(), $cutoff) -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '  SELECT TIMER DURATION:' -ForegroundColor Cyan
+        Write-Host '    [1]  5 min  - Quick Buyer Cell-Drop Check' -ForegroundColor White
+        Write-Host '    [2] 15 min  - Standard Everyday Endurance Check' -ForegroundColor White
+        Write-Host '    [3] 30 min  - Extended Everyday Use Test' -ForegroundColor White
+        Write-Host '    [4] 60 min  - Deep Endurance Test' -ForegroundColor White
+        Write-Host ("    [5] Full Drain - Run until {0}% safety cutoff" -f $cutoff) -ForegroundColor White
+        Write-Host '    [6] Custom Minutes (1..240 min)' -ForegroundColor White
+        Write-Host '    [M] Switch Load Profile (everyday / light / heavy)' -ForegroundColor DarkCyan
+        Write-Host '    [B] Back to Main Menu' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  Select option [1-6, M, B]: ' -NoNewline -ForegroundColor Cyan
+
+        $k = [Console]::ReadKey($true)
+        $ch = $k.KeyChar.ToString().ToUpperInvariant()
+        Write-Host $ch
+
+        if ($ch -eq 'B' -or $k.Key -eq [ConsoleKey]::Escape) {
+            return
+        } elseif ($ch -eq 'M') {
+            $modeIdx = ($modeIdx + 1) % $modes.Count
+            continue
+        }
+
+        $mins = 0
+        switch ($ch) {
+            '1' { $mins = 5 }
+            '2' { $mins = 15 }
+            '3' { $mins = 30 }
+            '4' { $mins = 60 }
+            '5' { $mins = -1 }
+            '6' {
+                $rawM = Read-Host '  Enter minutes (1..240)'
+                if ($rawM -match '^\d+$') { $mins = [int]$rawM }
+            }
+        }
+        if ($mins -eq 0) { continue }
+
+        Write-Host ''
+        Write-Host ("  [+] Starting Timed Battery Drain ({0} mode, cutoff {1}%)..." -f $curMode, $cutoff) -ForegroundColor Green
+        $sum = Invoke-TimedBatteryDrainTest -Minutes $mins -CutoffPct $cutoff -LoadMode $curMode -ConsoleLive
+        Write-Host ''
+        Write-Host '  === Battery Endurance Summary ===' -ForegroundColor Cyan
+        Write-Host '  Status       : ' -NoNewline
+        Write-TuiStatusTag -Status $sum.Status -NoNewline
+        Write-Host (" ({0})" -f $sum.StopReason)
+        Write-Host ("  Elapsed      : {0} min ({1} samples)" -f $sum.ElapsedMinutes, $sum.SampleCount) -ForegroundColor White
+        Write-Host ("  Charge Drop  : {0}% -> {1}% (-{2}%)" -f $sum.StartPct, $sum.EndPct, $sum.DropPct) -ForegroundColor White
+        $avgWStr = if ($null -ne $sum.AvgDischargeWatts) { "$($sum.AvgDischargeWatts) W (Peak $($sum.PeakDischargeWatts) W)" } else { 'N/A' }
+        Write-Host ("  Power Draw   : {0}  |  Min Voltage: {1} mV (Sag {2}%)" -f $avgWStr, $(if ($sum.MinVoltageMv) { $sum.MinVoltageMv } else { 'N/A' }), $sum.VoltageSagPct) -ForegroundColor White
+        $estStr = if ($null -ne $sum.EstimatedRuntimeFrom100Minutes) { ("~{0} min ({1} hrs)" -f $sum.EstimatedRuntimeFrom100Minutes, [Math]::Round($sum.EstimatedRuntimeFrom100Minutes / 60.0, 1)) } else { 'Need >=1% drop or WMI rate' }
+        Write-Host ("  Est. 100->0% : {0}" -f $estStr) -ForegroundColor Green
+        if ($sum.SuddenDropDetected) {
+            Write-Host ("  [X] DEAD CELL ALERT: Sudden drop {0}" -f $sum.SuddenDropDetail) -ForegroundColor Red
+        }
+        Write-Host ''
+        Read-Host '  Press Enter to return' | Out-Null
+    }
+}
+
 function Show-TuiMainMenu {
     param([bool]$IsAdmin = (Test-IsAdmin))
 
@@ -5252,7 +6207,8 @@ function Show-TuiMainMenu {
         [PSCustomObject]@{ Key='3'; Action='TerminalOnly'; Title='[3] Terminal-Only Quick Scorecard (No Browser)';   Desc='Headless: Fast Corporate Lock + Hardware Scorecard in Console' },
         [PSCustomObject]@{ Key='4'; Action='InstallerTui'; Title='[4] Silent App Installer TUI (Ninite / WinUtil)';  Desc='Zero Prompts: Pick Presets or 39 Apps with Arrow Keys & Spacebar' },
         [PSCustomObject]@{ Key='5'; Action='AuditAndEss';  Title='[5] Full Audit + Auto-Install Resale Essentials';  Desc='All-in-One: Inspect Laptop & Silently Install 8 Buyer Essentials' },
-        [PSCustomObject]@{ Key='6'; Action='UpgradeAll';   Title='[6] Silent Upgrade All Existing Apps';             Desc='Runs winget upgrade --all with zero Next/Accept prompts' }
+        [PSCustomObject]@{ Key='6'; Action='UpgradeAll';   Title='[6] Silent Upgrade All Existing Apps';             Desc='Runs winget upgrade --all with zero Next/Accept prompts' },
+        [PSCustomObject]@{ Key='7'; Action='BatteryTui';   Title='[7] Timed Battery Drain Test (Everyday Load + Timer)'; Desc='Real Unplugged Endurance: 5m..60m or Full Drain w/ Live Chart & Timer' }
     )
     if (-not $IsAdmin) {
         $options += [PSCustomObject]@{ Key='E'; Action='Elevate'; Title='[E] Relaunch as Administrator (Recommended)'; Desc='Unlocks Vendor BIOS WMI, BitLocker, MDM CIM, and SSD SMART Wear' }
@@ -5263,7 +6219,7 @@ function Show-TuiMainMenu {
     while ($true) {
         try { Clear-Host } catch {}
         Show-TuiHeader -IsAdmin $IsAdmin
-        Write-Host '  Use [Up/Down] Arrows + [Enter], or press hotkey [1-6, 0]:' -ForegroundColor Yellow
+        Write-Host '  Use [Up/Down] Arrows + [Enter], or press hotkey [1-7, E, 0]:' -ForegroundColor Yellow
         Write-Host ''
 
         for ($i = 0; $i -lt $options.Count; $i++) {
@@ -5404,10 +6360,29 @@ function Start-ReportHttpServer {
     $installAsync = $null
     $installRunspace = $null
 
+    $batDrainState = [hashtable]::Synchronized(@{
+        Running          = $false
+        State            = 'Idle'
+        WaitingForUnplug = $false
+        LoadMode         = 'everyday'
+        TargetMinutes    = 15
+        CutoffPct        = 10
+        ElapsedSeconds   = 0
+        RemainingSeconds = 0
+        CancelRequested  = $false
+        Error            = ''
+        CurrentSample    = $null
+        Summary          = $null
+        Samples          = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+    })
+    $batDrainBg = $null
+    $batDrainAsync = $null
+    $batDrainRunspace = $null
+
     try {
         if (-not $NoLaunchBrowser) {
             Write-Host ("[+] Interactive Report Server running at {0}" -f $prefix) -ForegroundColor Green
-            Write-Host "    Complete interactive tests or silent app installs in browser, or press [Q] here to stop server." -ForegroundColor Gray
+            Write-Host "    Complete interactive tests, battery timer, or app installs in browser, or press [Q] here to stop server." -ForegroundColor Gray
             try { Start-Process $prefix | Out-Null } catch {}
         }
 
@@ -5426,6 +6401,14 @@ function Start-ReportHttpServer {
                 $installBg = $null
                 $installAsync = $null
                 $installRunspace = $null
+            }
+            if ($batDrainBg -and $batDrainAsync -and $batDrainAsync.IsCompleted) {
+                try { $batDrainBg.EndInvoke($batDrainAsync) | Out-Null } catch {}
+                try { $batDrainBg.Dispose() } catch {}
+                try { $batDrainRunspace.Close(); $batDrainRunspace.Dispose() } catch {}
+                $batDrainBg = $null
+                $batDrainAsync = $null
+                $batDrainRunspace = $null
             }
             try {
                 if (-not [Console]::IsInputRedirected -and [Console]::KeyAvailable) {
@@ -5530,12 +6513,93 @@ function Start-ReportHttpServer {
                 } elseif ($method -eq 'POST' -and $path -eq '/api/install/cancel') {
                     $installState.CancelRequested = $true
                     Send-HttpResponse -Context $ctx -StatusCode 200 -ContentType 'application/json; charset=utf-8' -Body '{"ok":true}'
+                } elseif ($method -eq 'GET' -and $path -eq '/api/battery-test/status') {
+                    $bSnap = [PSCustomObject]@{
+                        Running          = [bool]$batDrainState.Running
+                        State            = [string]$batDrainState.State
+                        WaitingForUnplug = [bool]$batDrainState.WaitingForUnplug
+                        LoadMode         = [string]$batDrainState.LoadMode
+                        TargetMinutes    = [int]$batDrainState.TargetMinutes
+                        CutoffPct        = [int]$batDrainState.CutoffPct
+                        ElapsedSeconds   = [int]$batDrainState.ElapsedSeconds
+                        RemainingSeconds = [int]$batDrainState.RemainingSeconds
+                        Error            = [string]$batDrainState.Error
+                        CurrentSample    = $batDrainState.CurrentSample
+                        Summary          = $batDrainState.Summary
+                        Samples          = @($batDrainState.Samples.ToArray())
+                    } | ConvertTo-Json -Depth 6 -Compress
+                    Send-HttpResponse -Context $ctx -StatusCode 200 -ContentType 'application/json; charset=utf-8' -Body $bSnap
+                } elseif ($method -eq 'POST' -and $path -eq '/api/battery-test/start') {
+                    if ($batDrainState.Running) {
+                        Send-HttpResponse -Context $ctx -StatusCode 409 -ContentType 'application/json; charset=utf-8' -Body '{"ok":false,"error":"A battery drain test is already running."}'
+                        continue
+                    }
+                    $sr = New-Object System.IO.StreamReader($req.InputStream, [System.Text.Encoding]::UTF8)
+                    $body = $sr.ReadToEnd()
+                    $sr.Dispose()
+                    $reqObj = $null
+                    try { $reqObj = $body | ConvertFrom-Json } catch {}
+                    if ($null -eq $reqObj) {
+                        Send-HttpResponse -Context $ctx -StatusCode 400 -ContentType 'application/json; charset=utf-8' -Body '{"ok":false,"error":"Invalid JSON payload"}'
+                        continue
+                    }
+
+                    $bMins = if ($null -ne $reqObj.minutes) { [int]$reqObj.minutes } else { 15 }
+                    $bMode = if ($reqObj.mode) { ([string]$reqObj.mode).Trim().ToLowerInvariant() } else { 'everyday' }
+                    $bCut  = if ($null -ne $reqObj.cutoffPct) { [int]$reqObj.cutoffPct } else { 10 }
+
+                    if (($bMins -lt -1 -or $bMins -eq 0 -or $bMins -gt 240) -or ($bMode -notin @('everyday', 'light', 'heavy')) -or ($bCut -lt 5 -or $bCut -gt 50)) {
+                        Send-HttpResponse -Context $ctx -StatusCode 400 -ContentType 'application/json; charset=utf-8' -Body '{"ok":false,"error":"Invalid battery test parameters (minutes=-1 or 1..240, mode=everyday|light|heavy, cutoffPct=5..50)."}'
+                        continue
+                    }
+
+                    $batsNow = @(Invoke-SafeCim -ClassName 'Win32_Battery')
+                    if ($batsNow.Count -eq 0) {
+                        Send-HttpResponse -Context $ctx -StatusCode 400 -ContentType 'application/json; charset=utf-8' -Body '{"ok":false,"error":"No battery detected on this machine."}'
+                        continue
+                    }
+
+                    $totCap = 0.0
+                    if ($ReportData.Battery -and $ReportData.Battery.Batteries) {
+                        foreach ($bb in @($ReportData.Battery.Batteries)) {
+                            if ($bb.FullChargeMWh -gt 0) { $totCap += [double]$bb.FullChargeMWh }
+                        }
+                    }
+
+                    $batDrainState.Running = $true
+                    $batDrainState.State = 'Starting'
+                    $batDrainState.CancelRequested = $false
+
+                    $issB = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+                    foreach ($fnName in @('Invoke-SafeCim','Get-CpuTempCelsius','Get-BatteryCheckpointPath','Clear-BatteryCheckpoint','Set-BatteryTestKeepAwake','Get-BatteryDischargeSample','Measure-BatteryDrainSummary','Invoke-EverydayTickWorkload','Invoke-TimedBatteryDrainTest')) {
+                        $fnDef = (Get-Command -Name $fnName -ErrorAction Stop).Definition
+                        $issB.Commands.Add((New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($fnName, $fnDef)))
+                    }
+                    $batDrainRunspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace($issB)
+                    $batDrainRunspace.Open()
+                    $batDrainBg = [PowerShell]::Create()
+                    $batDrainBg.Runspace = $batDrainRunspace
+                    [void]$batDrainBg.AddScript({
+                        param($Mins, $Cut, $Mode, $Cap, $SharedState)
+                        Invoke-TimedBatteryDrainTest -Minutes $Mins -CutoffPct $Cut -LoadMode $Mode -TotalCapacityMWh $Cap -ProgressState $SharedState | Out-Null
+                    }).AddArgument($bMins).AddArgument($bCut).AddArgument($bMode).AddArgument($totCap).AddArgument($batDrainState)
+                    $batDrainAsync = $batDrainBg.BeginInvoke()
+
+                    Send-HttpResponse -Context $ctx -StatusCode 202 -ContentType 'application/json; charset=utf-8' -Body '{"ok":true}'
+                } elseif ($method -eq 'POST' -and $path -eq '/api/battery-test/stop') {
+                    $batDrainState.CancelRequested = $true
+                    Send-HttpResponse -Context $ctx -StatusCode 200 -ContentType 'application/json; charset=utf-8' -Body '{"ok":true}'
                 } elseif ($method -eq 'POST' -and $path -eq '/api/save') {
                     $sr = New-Object System.IO.StreamReader($req.InputStream, [System.Text.Encoding]::UTF8)
                     $body = $sr.ReadToEnd()
                     $sr.Dispose()
                     if ([string]::IsNullOrWhiteSpace($body)) { $body = '{}' }
                     $currentManualJson = $body
+                    if ($null -ne $batDrainState.Summary) {
+                        $ReportData | Add-Member -NotePropertyName BatteryDrain -NotePropertyValue $batDrainState.Summary -Force
+                        $ReportData | Add-Member -NotePropertyName BatteryDrainSamples -NotePropertyValue @($batDrainState.Samples.ToArray()) -Force
+                        $ReportData.Scoring = Get-BuyerVerdict -ReportData $ReportData
+                    }
                     $offlineHtml = Build-ReportHtml -ReportData $ReportData -ManualStateJson $currentManualJson -ServerMode $false
                     Write-AtomicTextFile -Path $ReportPath -Content $offlineHtml
                     $ack = (@{ ok = $true; path = $ReportPath } | ConvertTo-Json -Compress)
@@ -5576,6 +6640,14 @@ function Start-ReportHttpServer {
         if ($installRunspace) {
             try { $installRunspace.Close(); $installRunspace.Dispose() } catch {}
         }
+        if ($batDrainBg) {
+            $batDrainState.CancelRequested = $true
+            try { $batDrainBg.Stop() } catch {}
+            try { $batDrainBg.Dispose() } catch {}
+        }
+        if ($batDrainRunspace) {
+            try { $batDrainRunspace.Close(); $batDrainRunspace.Dispose() } catch {}
+        }
         try { if ($listener.IsListening) { $listener.Stop() } } catch {}
         try { $listener.Close() } catch {}
     }
@@ -5604,6 +6676,8 @@ function Invoke-LaptopInspect {
             $InstallOnly -or
             $UpgradeAll -or
             $DryRun -or
+            $BatteryTestOnly -or
+            ($BatteryTestMinutes -ne 0) -or
             -not [string]::IsNullOrWhiteSpace($InstallPreset) -or
             ($InstallApps -and $InstallApps.Count -gt 0) -or
             ($PSBoundParameters.ContainsKey('StressSeconds'))
@@ -5625,6 +6699,9 @@ function Invoke-LaptopInspect {
                     }
                     'InstallerTui' {
                         Invoke-TuiSilentInstallerMenu
+                    }
+                    'BatteryTui' {
+                        Invoke-TuiBatteryDrainMenu
                     }
                     'FullAudit' {
                         break
@@ -5665,9 +6742,28 @@ function Invoke-LaptopInspect {
             -AppsFlag $InstallApps `
             -UpgradeAllFlag:$UpgradeAll `
             -InstallOnlyFlag:$InstallOnly `
-            -DryRunFlag:$DryRun
+            -DryRunFlag:$DryRun `
+            -BatMinutesFlag $BatteryTestMinutes `
+            -BatModeFlag $BatteryTestMode `
+            -BatCutoffFlag $BatteryCutoffPct `
+            -BatOnlyFlag:$BatteryTestOnly
         if ($elevatedStarted) {
             Write-Host "  [+] Elevated session started in new window. Exiting non-admin parent." -ForegroundColor Green
+            return
+        }
+
+        if ($BatteryTestOnly) {
+            $bMins = if ($BatteryTestMinutes -ne 0) { $BatteryTestMinutes } else { 15 }
+            Show-TuiHeader -IsAdmin $isAdmin -Subtitle ("Timed Battery Drain Test ({0} mode, cutoff {1}%)" -f $BatteryTestMode, $BatteryCutoffPct)
+            $bSum = Invoke-TimedBatteryDrainTest -Minutes $bMins -CutoffPct $BatteryCutoffPct -LoadMode $BatteryTestMode -ConsoleLive
+            Write-Host ""
+            Write-Host "  === Battery Endurance Summary ===" -ForegroundColor Cyan
+            Write-Host ("  Status       : {0} ({1})" -f $bSum.Status, $bSum.StopReason)
+            $dropTxt = if ($null -ne $bSum.StartPct) { ("{0}% -> {1}% (-{2}%)" -f $bSum.StartPct, $bSum.EndPct, $bSum.DropPct) } else { 'N/A' }
+            Write-Host ("  Elapsed      : {0} min | Drop: {1}" -f $bSum.ElapsedMinutes, $dropTxt)
+            if ($null -ne $bSum.EstimatedRuntimeFrom100Minutes) {
+                Write-Host ("  Est. 100->0% : ~{0} min ({1} hrs)" -f $bSum.EstimatedRuntimeFrom100Minutes, [Math]::Round($bSum.EstimatedRuntimeFrom100Minutes / 60.0, 1)) -ForegroundColor Green
+            }
             return
         }
 
@@ -5687,6 +6783,8 @@ function Invoke-LaptopInspect {
             }
             return
         }
+
+        $prevBatCrash = Get-UnfinishedBatteryCheckpoint
 
         $swTotal = [System.Diagnostics.Stopwatch]::StartNew()
         if ($showMenu -and (Test-InteractiveConsole)) { try { Clear-Host } catch {} }
@@ -5752,6 +6850,13 @@ function Invoke-LaptopInspect {
         Write-TuiStepStart -Index 9 -Total 9 -Title 'Scoring & HTML Report'
         $swTotal.Stop()
 
+        $batDrainResult = $null
+        if ($BatteryTestMinutes -ne 0 -and $batInfo.BatteryCount -gt 0) {
+            Write-Host ""
+            Write-Host ("  [+] Running Timed Battery Drain ({0} min, {1} mode, cutoff {2}%)..." -f $BatteryTestMinutes, $BatteryTestMode, $BatteryCutoffPct) -ForegroundColor Cyan
+            $batDrainResult = Invoke-TimedBatteryDrainTest -Minutes $BatteryTestMinutes -CutoffPct $BatteryCutoffPct -LoadMode $BatteryTestMode -ConsoleLive
+        }
+
         $reportObj = [PSCustomObject]@{
             Meta = [PSCustomObject]@{
                 ToolName        = $script:ToolName
@@ -5763,21 +6868,23 @@ function Invoke-LaptopInspect {
                 StressSeconds   = $StressSeconds
                 IsAdmin         = [bool]$isAdmin
             }
-            System        = $sysInfo
-            CorporateLock = $corpAudit
-            Cpu           = $cpuInfo
-            Gpu           = $gpuInfo
-            Ram           = $ramInfo
-            Storage       = $storInfo
-            Battery       = $batInfo
-            Peripherals   = $periphInfo
-            InitialPorts  = $portSnap
-            Installer     = [PSCustomObject]@{
+            System               = $sysInfo
+            CorporateLock        = $corpAudit
+            Cpu                  = $cpuInfo
+            Gpu                  = $gpuInfo
+            Ram                  = $ramInfo
+            Storage              = $storInfo
+            Battery              = $batInfo
+            PreviousBatteryCrash = $prevBatCrash
+            BatteryDrain         = $batDrainResult
+            Peripherals          = $periphInfo
+            InitialPorts         = $portSnap
+            Installer            = [PSCustomObject]@{
                 Winget  = (Get-WingetInfo)
                 Catalog = @(Get-AppCatalog)
                 Presets = @(Get-AppPresets)
             }
-            Scoring       = $null
+            Scoring              = $null
         }
 
         $reportObj.Scoring = Get-BuyerVerdict -ReportData $reportObj

@@ -158,6 +158,32 @@ function Get-BuyerVerdict {
         }
     }
 
+    # 6b. Real Timed Battery Drain & Unfinished Crash Checkpoint Rules
+    if ($ReportData.PSObject.Properties.Name -contains 'PreviousBatteryCrash' -and $null -ne $ReportData.PreviousBatteryCrash) {
+        $prev = $ReportData.PreviousBatteryCrash
+        $score -= 35
+        $criticalFlags += ("Unfinished battery drain checkpoint detected (powered off unexpectedly around {0}% after {1}s on {2} load)" -f $prev.LastChargePct, $prev.ElapsedSeconds, $prev.LoadMode)
+        $deductions += '-35: Previous battery hard shutdown'
+    }
+    if ($ReportData.PSObject.Properties.Name -contains 'BatteryDrain' -and $null -ne $ReportData.BatteryDrain) {
+        $bd = $ReportData.BatteryDrain
+        if ($bd.SuddenDropDetected) {
+            $score -= 35
+            $criticalFlags += ("Sudden battery charge collapse during timed drain ({0})" -f $bd.SuddenDropDetail)
+            $deductions += '-35: Sudden battery % drop'
+        }
+        if ($null -ne $bd.VoltageSagPct -and $bd.VoltageSagPct -gt 15.0) {
+            $score -= 15
+            $warnings += ("High battery voltage sag ({0}%) under {1} load" -f $bd.VoltageSagPct, $bd.LoadMode)
+            $deductions += '-15: High battery voltage sag'
+        }
+        if ($bd.LoadMode -in @('everyday', 'light') -and $null -ne $bd.EstimatedRuntimeFrom100Minutes -and $bd.EstimatedRuntimeFrom100Minutes -lt 90) {
+            $score -= 15
+            $warnings += ("Short estimated battery runtime (~{0} min from 100%) under {1} use" -f $bd.EstimatedRuntimeFrom100Minutes, $bd.LoadMode)
+            $deductions += '-15: Short real battery runtime (<90m)'
+        }
+    }
+
     # 7. Device Manager Errors
     if ($per -and $per.DeviceErrors) {
         $actErrs = @($per.DeviceErrors | Where-Object { -not $_.IsDisabled })

@@ -24,13 +24,17 @@ param(
     [switch]$DryRun,
     [switch]$Menu,
     [switch]$NoMenu,
+    [int]$BatteryTestMinutes = 0,
+    [ValidateSet('everyday', 'light', 'heavy')][string]$BatteryTestMode = 'everyday',
+    [int]$BatteryCutoffPct = 10,
+    [switch]$BatteryTestOnly,
     [string]$CleanupTempPath = ''
 )
 
 $ErrorActionPreference = 'Continue'
 $script:SelfSource = $MyInvocation.MyCommand.Definition
 $script:ToolName = 'LaptopInspect'
-$script:ToolVersion = '1.2.0'
+$script:ToolVersion = '1.3.0'
 $script:RepoUrl = 'https://github.com/azizou-houssem-eddine/laptop-inspect'
 $script:ScriptStartTime = Get-Date
 
@@ -46,6 +50,10 @@ if ($env:LI_UPGRADE_ALL -eq '1') { $UpgradeAll = $true }
 if ($env:LI_DRY_RUN -eq '1') { $DryRun = $true }
 if ($env:LI_MENU -eq '1') { $Menu = $true }
 if ($env:LI_NO_MENU -eq '1') { $NoMenu = $true }
+if ($env:LI_BAT_ONLY -eq '1') { $BatteryTestOnly = $true }
+if ($env:LI_BAT_MINUTES -match '^-?\d+$') { $BatteryTestMinutes = [int]$env:LI_BAT_MINUTES }
+if ($env:LI_BAT_MODE -match '^(everyday|light|heavy)$') { $BatteryTestMode = $env:LI_BAT_MODE.ToLowerInvariant() }
+if ($env:LI_BAT_CUTOFF -match '^\d+$') { $BatteryCutoffPct = [int]$env:LI_BAT_CUTOFF }
 if (-not [string]::IsNullOrWhiteSpace($env:LI_INSTALL)) {
     $rawInst = $env:LI_INSTALL.Trim()
     if ($rawInst -match '^(essentials|office|tech|dev)$' -and [string]::IsNullOrWhiteSpace($InstallPreset)) {
@@ -62,6 +70,10 @@ if ([string]::IsNullOrWhiteSpace($OutDir) -and -not [string]::IsNullOrWhiteSpace
 if ($Quick) { $SkipStress = $true; $StressSeconds = 0 }
 if ($StressSeconds -lt 0) { $StressSeconds = 0 }
 if ($StressSeconds -gt 60) { $StressSeconds = 60 }
+if ($BatteryTestMinutes -lt -1) { $BatteryTestMinutes = -1 }
+if ($BatteryTestMinutes -gt 240) { $BatteryTestMinutes = 240 }
+if ($BatteryCutoffPct -lt 5) { $BatteryCutoffPct = 5 }
+if ($BatteryCutoffPct -gt 50) { $BatteryCutoffPct = 50 }
 
 function Test-IsAdmin {
     try {
@@ -173,6 +185,10 @@ function Request-OptionalElevation {
         [switch]$InstallOnlyFlag,
         [switch]$DryRunFlag,
         [switch]$MenuFlag,
+        [int]$BatMinutesFlag = 0,
+        [string]$BatModeFlag = 'everyday',
+        [int]$BatCutoffFlag = 10,
+        [switch]$BatOnlyFlag,
         [switch]$ForceElevate
     )
     if (Test-IsAdmin) { return $false }
@@ -224,6 +240,10 @@ function Request-OptionalElevation {
     if ($InstallOnlyFlag) { $argParts += '-InstallOnly' }
     if ($DryRunFlag) { $argParts += '-DryRun' }
     if ($MenuFlag) { $argParts += '-Menu' }
+    if ($BatMinutesFlag -ne 0) { $argParts += ('-BatteryTestMinutes {0}' -f $BatMinutesFlag) }
+    if ($BatModeFlag -and $BatModeFlag -ne 'everyday') { $argParts += ('-BatteryTestMode {0}' -f $BatModeFlag) }
+    if ($BatCutoffFlag -ne 10) { $argParts += ('-BatteryCutoffPct {0}' -f $BatCutoffFlag) }
+    if ($BatOnlyFlag) { $argParts += '-BatteryTestOnly' }
     if (-not [string]::IsNullOrWhiteSpace($TargetOutDir)) { $argParts += ('-OutDir "{0}"' -f $TargetOutDir) }
     if (-not [string]::IsNullOrWhiteSpace($tempPath)) { $argParts += ('-CleanupTempPath "{0}"' -f $tempPath) }
 
